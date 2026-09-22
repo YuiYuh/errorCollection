@@ -1,0 +1,11 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "rootDir": "../src",
+    "outDir": "../.test-build",
+    "module": "Node16",
+    "moduleResolution": "Node16"
+  },
+  "include": ["../src/content.ts", "../src/RichContent.tsx", "../src/DateArchive.tsx"]
+}
