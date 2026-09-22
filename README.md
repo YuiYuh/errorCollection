@@ -38,7 +38,7 @@ AI_MODEL=支持图像输入的模型名
 
 ### 推荐服务入口
 
-- AI 中转站注册：[ModelFlare](https://modelflare.dev/sign-up?partner=LSVXXRTTA3YJ)
+- AI 中转站注册：[ModelFlare](https://modelflare.dev/sign-up?partner=PPXNOECJRG1CIMME)
 - VPN 注册：[VPN 服务入口](https://43.132.225.172:4901/register?code=V7BXCG2R)
 
 以上链接也会显示在应用的“状态”页面，方便从手机直接打开。服务由第三方提供，价格、协议和可用性以服务商页面为准。

@@ -195,7 +195,7 @@ const fieldConfidenceValue = (result: any, field: string) => {
 };
 
 const PROJECT_SERVICES = {
-  relay: 'https://modelflare.dev/sign-up?partner=LSVXXRTTA3YJ',
+  relay: 'https://modelflare.dev/sign-up?partner=PPXNOECJRG1CIMME',
   vpn: 'https://43.132.225.172:4901/register?code=V7BXCG2R',
 };
 const fieldNeedsReview = (result: any, field: string) => (result?.uncertain_parts || []).some((part: unknown) => {
