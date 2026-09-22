@@ -37,7 +37,7 @@ def wait_for_task(client: TestClient, task_id: int, timeout: float = 20.0) -> di
     task = {}
     while time.time() < deadline:
         task = client.get(f"/api/tasks/{task_id}").json()
-        if task["status"] in {"waiting_confirmation", "failed", "cancelled"}:
+        if task["status"] in {"confirmed", "waiting_confirmation", "failed", "cancelled"}:
             return task
         time.sleep(0.5)
     return task
@@ -56,7 +56,7 @@ def test_full_pipeline_from_upload_to_confirmed_question(ai_client, caplog):
     task_id = response.json()["id"]
 
     task = wait_for_task(client, task_id)
-    assert task["status"] == "waiting_confirmation", task
+    assert task["status"] == "confirmed", task
     assert task["result"]["first_error_step"] == "第2行漏掉负号"
     assert task["ai_meta"]["model"] == "e2e-vision-model"
 

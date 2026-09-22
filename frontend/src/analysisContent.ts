@@ -1,4 +1,4 @@
-type Analysis = { user_solution_latex?: string; reference_solution_latex?: string; first_error_step?: string; error_analysis?: string; correct_approach?: string; uncertain_parts?: string[] };
+type Analysis = { user_solution_latex?: string; reference_solution_latex?: string; first_error_step?: string; error_analysis?: string; correct_approach?: string; uncertain_parts?: string[]; needs_review?: boolean };
 
 // Be conservative: only collapse paragraphs consisting entirely of source-availability
 // notices. Any calculation, specific error or uncertainty remains in the main content.

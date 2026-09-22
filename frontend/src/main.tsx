@@ -177,7 +177,7 @@ function compactTitle(question: any) {
   if (month && day && dailyNumber > 0) return `${Number(month)}月${Number(day)}日 · 当天第${dailyNumber}题`;
   return question.question_label?.trim() || '未标注题目';
 }
-const confidenceClass = (value: number) => (value >= 0.8 ? 'high' : value >= 0.6 ? 'mid' : 'low');
+const confidenceClass = (value: number) => (value >= 0.85 ? 'high' : value >= 0.6 ? 'mid' : 'low');
 const FIELD_CONFIDENCE_LABELS: [string, string][] = [
   ['question', '题目文字'], ['formula', '公式'], ['solution', '解题过程'],
   ['reference', '参考答案'], ['classification', '科目 / 知识点'],
@@ -1204,7 +1204,7 @@ function App() {
             {FIELD_CONFIDENCE_LABELS.map(([field, label]) => {
               const value = fieldConfidenceValue(draft, field);
               return <span className={`field-confidence-item ${confidenceClass(value)}`} key={field}>
-                <span>{label}</span><b>{Math.round(value * 100)}%</b>{fieldNeedsReview(draft, field) && <em>需核对</em>}
+                <span>{label}</span><b>{Math.round(value * 100)}%</b>
               </span>;
             })}
           </div>

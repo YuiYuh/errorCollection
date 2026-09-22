@@ -163,7 +163,19 @@ class OpenAICompatibleClient:
             for index, item in enumerate(images):
                 content.append({"type": "text", "text": f"下面是第 {index} 张照片，image_index={index}。"})
                 content.extend(await self._image_parts([item]))
-            body, meta = await self._chat({"response_format": {"type": "json_object"}, "messages": [{"role": "user", "content": content}]}, task_id)
+            last_error: Exception | None = None
+            for locate_attempt in range(2):
+                try:
+                    body, meta = await self._chat({"response_format": {"type": "json_object"}, "messages": [{"role": "user", "content": content}]}, task_id)
+                    break
+                except Exception as exc:
+                    last_error = exc
+                    if locate_attempt == 0:
+                        # Vision relays occasionally reset a long-lived HTTP/2
+                        # connection. Rebuild the request after a short pause.
+                        await asyncio.sleep(2)
+            else:
+                raise last_error or RuntimeError("AI 未返回题目区域")
             raw = body["choices"][0]["message"]["content"]
             try:
                 text = raw.strip()

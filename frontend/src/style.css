@@ -489,6 +489,7 @@ pre {
 .statusrow > span { min-width: 0; overflow-wrap: anywhere; }
 .statusrow > button { flex-shrink: 0; }
 .uncertain { background: var(--surface-2); color: var(--muted); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; font-size: .875rem; }
+.review-flag { background: color-mix(in srgb, var(--warn) 14%, transparent); color: var(--warn); border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent); border-radius: var(--radius); padding: 10px 12px; font-size: .875rem; }
 .error, .notice { border-radius: var(--radius); padding: 13px 15px; margin: 0 0 20px; font-size: .875rem; border: 1px solid var(--border); }
 .error { background: var(--surface-2); color: var(--text); border-color: var(--border); }
 .notice { background: var(--surface-2); color: var(--muted); }

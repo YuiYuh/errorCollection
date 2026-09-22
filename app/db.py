@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS questions (
  code_blocks TEXT NOT NULL DEFAULT '[]', first_error_step TEXT, error_analysis TEXT,
  correct_approach TEXT, key_lesson TEXT, review_prompt TEXT, error_types TEXT NOT NULL DEFAULT '[]',
  knowledge_points TEXT NOT NULL DEFAULT '[]', uncertain_parts TEXT NOT NULL DEFAULT '[]',
- confidence REAL, is_typical INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'confirmed',
+ confidence REAL, is_typical INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'confirmed', needs_review INTEGER NOT NULL DEFAULT 0,
  created_at TEXT NOT NULL, updated_at TEXT NOT NULL, next_review_at TEXT,
  review_count INTEGER NOT NULL DEFAULT 0, correct_count INTEGER NOT NULL DEFAULT 0,
  mastery REAL NOT NULL DEFAULT 0, source TEXT NOT NULL DEFAULT 'upload', deleted_at TEXT,
@@ -79,6 +79,7 @@ MIGRATIONS = (
     "ALTER TABLE ai_tasks ADD COLUMN recognition_hint TEXT",
     "ALTER TABLE ai_tasks ADD COLUMN multi_batch_id TEXT",
     "ALTER TABLE ai_tasks ADD COLUMN crop_ready INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE questions ADD COLUMN needs_review INTEGER NOT NULL DEFAULT 0",
 )
 
 

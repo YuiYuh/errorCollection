@@ -5,10 +5,12 @@ import re
 from collections import defaultdict
 
 from ..db import db, json_load, now_iso
+from ..config import settings
 from .ai.openai_compatible import OpenAICompatibleClient
 from .backup import maybe_auto_backup
 
 log = logging.getLogger(__name__)
+_BATCH_LOCKS: dict[str, asyncio.Lock] = {}
 
 # 这些状态代表任务正在被处理；进程重启后它们一定是孤儿，必须重新排队
 ORPHAN_STATUSES = ("recognizing", "pending_analysis", "analyzing", "recognition_completed", "analysis_completed")
@@ -49,11 +51,29 @@ def _label_key(label: str) -> str:
 
 async def _prepare_multi_batch(task_id: int, batch_id: str) -> None:
     """Locate and persist per-question crops for a multi-page upload."""
+    lock = _BATCH_LOCKS.setdefault(batch_id, asyncio.Lock())
+    async with lock:
+        await _prepare_multi_batch_locked(task_id, batch_id)
+
+
+async def _prepare_multi_batch_locked(task_id: int, batch_id: str) -> None:
     with db() as conn:
         tasks = conn.execute("SELECT id,question_label FROM ai_tasks WHERE multi_batch_id=? ORDER BY id", (batch_id,)).fetchall()
         if not tasks:
             raise RuntimeError("多题任务组不存在")
         source_task = tasks[0]["id"]
+        fresh = conn.execute("SELECT crop_ready FROM ai_tasks WHERE multi_batch_id=?", (batch_id,)).fetchall()
+        if fresh and all(bool(row["crop_ready"]) for row in fresh):
+            return
+        # The first task may have already attempted localization and failed
+        # while another task in the same batch was waiting on this lock. Reuse
+        # that terminal error instead of sending the same locator request again.
+        failed = conn.execute(
+            "SELECT error FROM ai_tasks WHERE multi_batch_id=? AND status='failed' ORDER BY id LIMIT 1",
+            (batch_id,),
+        ).fetchone()
+        if failed:
+            raise RuntimeError(failed["error"] or "多题任务定位失败，请重试")
         source_rows = conn.execute(
             "SELECT qi.* FROM question_images qi JOIN ai_task_images ati ON qi.id=ati.image_id WHERE ati.task_id=? ORDER BY qi.id",
             (source_task,),
@@ -199,7 +219,26 @@ async def process_task(task_id: int) -> None:
             conn.execute("INSERT OR REPLACE INTO ai_results(task_id,result_json,raw_response,created_at,meta_json) VALUES(?,?,?,?,?)", (task_id, json.dumps(result, ensure_ascii=False), json.dumps(raw, ensure_ascii=False) if raw else None, now_iso(), json.dumps(meta, ensure_ascii=False) if meta else None))
             conn.execute("UPDATE ai_tasks SET status='recognition_completed', updated_at=? WHERE id=?", (now_iso(), task_id))
             conn.execute("UPDATE ai_tasks SET status='analysis_completed', updated_at=? WHERE id=?", (now_iso(), task_id))
-            conn.execute("UPDATE ai_tasks SET status='waiting_confirmation', error=NULL, updated_at=? WHERE id=?", (now_iso(), task_id))
+        # Archive every successful result immediately.  A low score is retained
+        # as a review marker and never blocks the user's upload queue.
+        from ..routers.questions import QuestionIn, save_question
+        score = result.get("confidence")
+        try:
+            score_value = float(score) if score is not None else 0.0
+        except (TypeError, ValueError):
+            score_value = 0.0
+        result["needs_review"] = score_value < settings.ai_confidence_threshold
+        result["task_id"] = task_id
+        with db() as conn:
+            conn.execute("UPDATE ai_results SET result_json=? WHERE task_id=?", (json.dumps(result, ensure_ascii=False), task_id))
+        if not attempt:
+            save_question(QuestionIn.model_validate(result))
+        else:
+            with db() as conn:
+                conn.execute("UPDATE ai_tasks SET status='waiting_confirmation', error=NULL, updated_at=? WHERE id=?", (now_iso(), task_id))
+            return
+        with db() as conn:
+            conn.execute("UPDATE ai_tasks SET status='confirmed', error=NULL, updated_at=? WHERE id=?", (now_iso(), task_id))
     except Exception as exc:
         with db() as conn:
             conn.execute("UPDATE ai_tasks SET status='failed', error=?, updated_at=? WHERE id=? AND status!='cancelled'", (str(exc)[:1000], now_iso(), task_id))
@@ -216,8 +255,8 @@ class TaskWorker:
         while not self.stop_event.is_set():
             with db() as conn:
                 rows = conn.execute("SELECT id FROM ai_tasks WHERE status IN ('pending_recognition','uploaded','pending') ORDER BY id LIMIT 2").fetchall()
-            for row in rows:
-                await process_task(row["id"])
+            if rows:
+                await asyncio.gather(*(process_task(row["id"]) for row in rows))
             ticks += 1
             if ticks == 1 or ticks % 150 == 0:  # 启动时检查一次，之后约每 5 分钟检查
                 try:

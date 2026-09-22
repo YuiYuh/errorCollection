@@ -47,10 +47,9 @@ export function ResultField({ label, value, onChange }: { label: string; value?:
 }
 
 export function AnalysisContent({ result }: { result: Parameters<typeof analysisPresentation>[0] }) {
-  const { sections, notices, uncertainty, notice } = analysisPresentation(result);
+  const { sections, notices } = analysisPresentation(result);
   return <div className="analysis-content">
-    {notice && <p className="uncertain">{notice}</p>}
-    {uncertainty.length > 0 && <div className="uncertain"><b>待核对</b>{uncertainty.map((value, index) => <RichText key={index} text={value} />)}</div>}
+    {result.needs_review && <p className="review-flag">低置信度结果，已自动加入错题本，请稍后快速核对。</p>}
     {sections.map(item => item.secondary
       ? <details key={item.field}><summary>{item.label}</summary><RichText text={item.value} /></details>
       : <div key={item.field}><h3>{item.label}</h3><RichText text={item.value} /></div>)}

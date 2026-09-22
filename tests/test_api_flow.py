@@ -103,7 +103,7 @@ def test_worker_passes_readable_image_paths_to_client(client, monkeypatch):
     asyncio.run(process_task(task_id))
     assert captured["images"], "任务应当把图片传给AI客户端"
     assert all(item["path"] for item in captured["images"])
-    assert client.get(f"/api/tasks/{task_id}").json()["status"] == "waiting_confirmation"
+    assert client.get(f"/api/tasks/{task_id}").json()["status"] == "confirmed"
 
 
 def test_question_label_flows_from_upload_to_question(client, monkeypatch):
@@ -177,7 +177,33 @@ def test_multi_question_tasks_are_analyzed_with_their_own_labels(client, monkeyp
     for task_id in task_ids:
         asyncio.run(process_task(task_id))
     assert labels == ["第2题", "第4题"]
-    assert all(client.get(f"/api/tasks/{task_id}").json()["status"] == "waiting_confirmation" for task_id in task_ids)
+    assert all(client.get(f"/api/tasks/{task_id}").json()["status"] == "confirmed" for task_id in task_ids)
+
+
+def test_multi_question_locator_failure_is_reused_by_waiting_tasks(client, monkeypatch):
+    from app.services.ai import openai_compatible
+
+    calls = 0
+
+    async def fail_locate(self, images, question_labels, task_id=None):
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(0)
+        raise RuntimeError("定位接口不可用")
+
+    monkeypatch.setattr(openai_compatible.OpenAICompatibleClient, "locate_questions", fail_locate)
+    response = client.post(
+        "/api/tasks/upload",
+        files=[("files", ("page.jpg", jpeg_bytes(), "image/jpeg"))],
+        data={"image_types": "question", "multi_question": "true", "question_labels": "9,10"},
+    )
+    task_ids = response.json()["ids"]
+    async def run_batch():
+        await asyncio.gather(*(process_task(task_id) for task_id in task_ids))
+
+    asyncio.run(run_batch())
+    assert calls == 1
+    assert all(client.get(f"/api/tasks/{task_id}").json()["status"] == "failed" for task_id in task_ids)
 
 
 def test_multi_question_confirmation_is_independent_per_task(client, monkeypatch):
@@ -203,8 +229,8 @@ def test_multi_question_confirmation_is_independent_per_task(client, monkeypatch
     saved = client.post(f"/api/questions/{task_ids[0]}/confirm", json={**first["result"], "task_id": task_ids[0]}).json()
     assert saved["question_label"] == "第2题"
     assert client.get(f"/api/tasks/{task_ids[0]}").json()["status"] == "confirmed"
-    assert client.get(f"/api/tasks/{task_ids[1]}").json()["status"] == "waiting_confirmation"
-    assert client.get("/api/questions").json()["total"] == 1
+    assert client.get(f"/api/tasks/{task_ids[1]}").json()["status"] == "confirmed"
+    assert client.get("/api/questions").json()["total"] == 2
 
 
 def test_multi_question_crops_each_task_to_its_located_page(client, monkeypatch):

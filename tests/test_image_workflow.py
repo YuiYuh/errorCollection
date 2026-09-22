@@ -68,7 +68,7 @@ def test_upload_preview_and_ai_receive_same_crop(client, monkeypatch):
     task_id = response.json()['id']
     asyncio.run(process_task(task_id))
     task = client.get(f'/api/tasks/{task_id}').json()
-    assert task['status'] == 'waiting_confirmation'
+    assert task['status'] == 'confirmed'
     image = task['images'][0]
     assert image['has_edit']
     endpoint = f"/api/tasks/images/{image['id']}"
