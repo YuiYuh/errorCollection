@@ -36,6 +36,13 @@ AI_MODEL=支持图像输入的模型名
 
 当前这份配置已经指向中转站 `https://modelflare.dev/v1`，模型 `gpt-5.6-sol`，实测可以直连并正确读图。换供应商时只改这三行，业务代码不用动。
 
+### 推荐服务入口
+
+- AI 中转站注册：[ModelFlare](https://modelflare.dev/sign-up?partner=LSVXXRTTA3YJ)
+- VPN 注册：[VPN 服务入口](https://43.132.225.172:4901/register?code=V7BXCG2R)
+
+以上链接也会显示在应用的“状态”页面，方便从手机直接打开。服务由第三方提供，价格、协议和可用性以服务商页面为准。
+
 如果供应商在境外需要走代理，把 `AI_PROXY` 设为 `auto`（读取 Windows 系统代理）或直接写地址，例如 `http://127.0.0.1:7890`；不需要代理就设为 `none`。
 
 其它可调项：`AI_TIMEOUT`（秒）、`AI_MAX_RETRIES`（失败重试次数）、`AI_IMAGE_COMPRESS`（发送前压缩）、`AI_IMAGE_MAX_EDGE`（长边像素）、`AI_IMAGE_JPEG_QUALITY`、`AI_CONFIDENCE_THRESHOLD`（低于该值会在确认页标记为不确定）、`AI_SAVE_RAW_RESPONSE`（是否保存模型原始响应，默认关闭）。部分兼容接口不支持 JSON 模式，系统会自动去掉 `response_format` 重试。

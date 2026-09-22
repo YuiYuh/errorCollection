@@ -193,6 +193,11 @@ const fieldConfidenceValue = (result: any, field: string) => {
   if (field === 'reference') return result?.reference_solution_latex ? correction : 0;
   return result?.subject && !['unknown', 'math1'].includes(result.subject) && result?.knowledge_points?.length ? Math.min(recognition, correction) : 0;
 };
+
+const PROJECT_SERVICES = {
+  relay: 'https://modelflare.dev/sign-up?partner=LSVXXRTTA3YJ',
+  vpn: 'https://43.132.225.172:4901/register?code=V7BXCG2R',
+};
 const fieldNeedsReview = (result: any, field: string) => (result?.uncertain_parts || []).some((part: unknown) => {
   const text = String(part);
   const markers: Record<string, string[]> = {
@@ -1645,6 +1650,19 @@ function App() {
                 ))}
               </>
             )}
+          </section>
+
+          <section className="service-promo">
+            <h3>推荐服务</h3>
+            <p className="muted">需要 AI 中转或网络加速时，可通过下面的入口注册。服务由第三方提供，具体价格和可用性以其页面为准。</p>
+            <div className="service-links">
+              <a className="service-link" href={PROJECT_SERVICES.relay} target="_blank" rel="noopener noreferrer">
+                <span><b>AI 中转站</b><small>ModelFlare 注册入口</small></span><strong>↗</strong>
+              </a>
+              <a className="service-link" href={PROJECT_SERVICES.vpn} target="_blank" rel="noopener noreferrer">
+                <span><b>VPN 服务</b><small>注册入口</small></span><strong>↗</strong>
+              </a>
+            </div>
           </section>
 
           <section>
