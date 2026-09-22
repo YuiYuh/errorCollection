@@ -4,8 +4,8 @@ export type ImageEdit = { rotation: number; x: number; y: number; width: number;
 export type EditedImage = { edit: ImageEdit; preview: string };
 const full = { x: 0, y: 0, width: 1, height: 1 };
 
-export function CropEditor({ file, initial, onSave, onClose }: {
-  file: File; initial?: EditedImage; onSave: (value: EditedImage | null) => void; onClose: () => void;
+export function CropEditor({ file, sourceUrl, initial, onSave, onClose }: {
+  file?: File; sourceUrl?: string; initial?: EditedImage; onSave: (value: EditedImage | null) => void; onClose: () => void;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const anchor = useRef<{ x: number; y: number } | null>(null);
@@ -16,13 +16,14 @@ export function CropEditor({ file, initial, onSave, onClose }: {
   const closeButton = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     closeButton.current?.focus();
-    const url = URL.createObjectURL(file);
+    const url = sourceUrl || (file ? URL.createObjectURL(file) : '');
     const image = new Image();
     image.onload = () => setSource(image);
     image.onerror = () => setError('浏览器无法预览此格式。可直接上传原图，或改用 JPEG / PNG。');
-    image.src = url;
-    return () => { image.onload = null; image.onerror = null; URL.revokeObjectURL(url); };
-  }, [file]);
+    if (url) image.src = url;
+    else setError('没有可预览的图片');
+    return () => { image.onload = null; image.onerror = null; if (file && !sourceUrl) URL.revokeObjectURL(url); };
+  }, [file, sourceUrl]);
   useEffect(() => {
     if (!source || !canvas.current) return;
     const c = canvas.current;

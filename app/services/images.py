@@ -1,11 +1,40 @@
 """图片预处理：发送给视觉模型前按配置压缩，原图始终保留在磁盘。"""
 import io
+import hashlib
 import logging
+import uuid
 from pathlib import Path
 
 from ..config import settings
 
 log = logging.getLogger(__name__)
+
+
+def thumbnail_path(path: str | Path, cache_key: str | None = None) -> Path:
+    """Return a cached JPEG thumbnail path, creating it atomically on demand."""
+    source = Path(path)
+    if not source.exists():
+        raise FileNotFoundError(source)
+    stat = source.stat()
+    source_fingerprint = cache_key or f"{source.resolve()}:{stat.st_size}:{stat.st_mtime_ns}"
+    key_source = f"{source_fingerprint}:{settings.thumbnail_max_edge}"
+    key = hashlib.sha256(key_source.encode("utf-8")).hexdigest()
+    cache_dir = settings.data_dir / "thumbnail_cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    target = cache_dir / f"{key}.jpg"
+    if target.exists() and target.stat().st_size > 0:
+        return target
+    from PIL import Image, ImageOps
+    temporary = cache_dir / f".{target.name}.{uuid.uuid4().hex}.tmp"
+    try:
+        with Image.open(source) as original:
+            image = ImageOps.exif_transpose(original).convert("RGB")
+            image.thumbnail((max(64, settings.thumbnail_max_edge), max(64, settings.thumbnail_max_edge)), Image.Resampling.LANCZOS)
+            image.save(temporary, format="JPEG", quality=82, optimize=True)
+        temporary.replace(target)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return target
 
 
 def edit_image(path, edit):

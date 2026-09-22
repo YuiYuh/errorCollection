@@ -2,6 +2,7 @@ import asyncio
 import json
 import base64
 import logging
+import random
 import time
 from typing import Any
 
@@ -42,18 +43,64 @@ tags 是 1 至 3 个辅助标签的 JSON 数组，用于用户回看题目特征
 """ + syllabus_prompt()
 
 
+class AIServiceError(RuntimeError):
+    """An actionable AI failure with a stable category for task history/UI."""
+
+    def __init__(self, message: str, category: str = "unknown", retryable: bool = False):
+        super().__init__(message)
+        self.category = category
+        self.retryable = retryable
+
+
+def error_category(exc: Exception | None) -> str:
+    if isinstance(exc, AIServiceError):
+        return exc.category
+    if exc is None:
+        return "unknown"
+    if isinstance(exc, httpx.TimeoutException):
+        return "timeout"
+    if isinstance(exc, httpx.NetworkError):
+        return "network"
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        if status == 401:
+            return "authentication"
+        if status == 404:
+            return "configuration"
+        if status == 429:
+            return "rate_limit"
+        if status == 408 or status >= 500:
+            return "server"
+        return "invalid_request"
+    if isinstance(exc, (json.JSONDecodeError, KeyError, IndexError, TypeError, ValueError)):
+        return "invalid_response"
+    return "unknown"
+
+
+def _retryable(exc: Exception) -> bool:
+    if isinstance(exc, AIServiceError):
+        return exc.retryable
+    if isinstance(exc, (httpx.TimeoutException, httpx.NetworkError)):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        return status == 408 or status == 429 or status >= 500
+    return False
+
+
 class OpenAICompatibleClient:
     async def _chat(self, payload: dict[str, Any], task_id: int | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
         """发送请求并返回 (响应体, 元数据)。元数据只含模型名、耗时、状态码，不含密钥。"""
         if not settings.ai_api_key:
-            raise RuntimeError("AI_API_KEY未配置，图片已保存；配置密钥后可在任务页重试")
+            raise AIServiceError("AI_API_KEY未配置，图片已保存；配置密钥后可在任务页重试", "configuration")
         payload = {"model": settings.ai_model, "temperature": 0.1, **payload}
         url = settings.ai_base_url.rstrip("/") + "/chat/completions"
         headers = {"Authorization": f"Bearer {settings.ai_api_key}", "Content-Type": "application/json"}
         last_error: Exception | None = None
         use_json_mode = True
         proxy = resolve_ai_proxy()
-        for attempt in range(settings.ai_max_retries + 1):
+        retries = max(0, int(settings.ai_max_retries))
+        for attempt in range(retries + 1):
             started = time.perf_counter()
             try:
                 async with httpx.AsyncClient(timeout=settings.ai_timeout, proxy=proxy, trust_env=False) as client:
@@ -82,9 +129,15 @@ class OpenAICompatibleClient:
                     "AI request failed task=%s model=%s attempt=%d elapsed_ms=%d error=%s",
                     task_id, settings.ai_model, attempt + 1, round((time.perf_counter() - started) * 1000), type(exc).__name__,
                 )
-                if attempt < settings.ai_max_retries:
-                    await asyncio.sleep(2 ** attempt)
-        raise RuntimeError(_friendly_error(last_error))
+                if attempt < retries and _retryable(exc):
+                    base = max(0.0, float(settings.ai_retry_base_delay))
+                    ceiling = max(base, float(settings.ai_retry_max_delay))
+                    jitter = random.uniform(0, min(0.5, ceiling))
+                    await asyncio.sleep(min(ceiling, base * (2 ** attempt) + jitter))
+                elif attempt < retries:
+                    break
+        category = error_category(last_error)
+        raise AIServiceError(_friendly_error(last_error), category, _retryable(last_error) if last_error else False) from last_error
 
 
     async def _image_parts(self, images: list[dict[str, Any]]) -> list[dict[str, Any]]:

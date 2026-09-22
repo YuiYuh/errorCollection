@@ -1,8 +1,9 @@
 from datetime import datetime, timedelta, timezone
+from collections import defaultdict
 
 from fastapi import APIRouter
 from ..db import db, json_load, now_iso
-from ..timezone import LOCAL_TZ
+from ..timezone import day_bounds_utc
 from ..subjects import SUBJECTS, normalize_subject
 from ..syllabus import UNCLASSIFIED, detail_knowledge_point, primary_knowledge_point, syllabus_points
 
@@ -11,9 +12,7 @@ router = APIRouter(prefix="/api/stats", tags=["stats"])
 @router.get("/overview")
 def overview():
     now = datetime.now(timezone.utc)
-    local_start = now.astimezone(LOCAL_TZ).replace(hour=0, minute=0, second=0, microsecond=0)
-    start = local_start.astimezone(timezone.utc)
-    end = (local_start + timedelta(days=1)).astimezone(timezone.utc)
+    start, end = day_bounds_utc(now)
     with db() as conn:
         total = conn.execute("SELECT COUNT(*) FROM questions WHERE deleted_at IS NULL").fetchone()[0]
         due = conn.execute("SELECT COUNT(*) FROM questions q JOIN review_cards rc ON rc.question_id=q.id WHERE q.deleted_at IS NULL AND rc.due_at<=?", (now.isoformat(),)).fetchone()[0]
@@ -48,6 +47,108 @@ def _rate(correct: int, partial: int, total: int) -> float:
         return 0.0
     # 部分正确按一半计入正确率
     return round((correct + partial * 0.5) / total, 4)
+
+
+def _stats_point(row: dict) -> str:
+    """Resolve a question to the same actionable point used by weak-point stats."""
+    raw = json_load(row.get("knowledge_points"), [])
+    if not isinstance(raw, list):
+        raw = [raw]
+    raw_values = [str(value).strip() for value in raw if str(value).strip()]
+    subject_labels = {label for key, label in SUBJECTS.items() if key != "unknown"}
+    usable = [
+        value for value in raw_values
+        if value != UNCLASSIFIED and value not in subject_labels and normalize_subject(value) == "unknown"
+    ]
+    evidence = " ".join(str(row.get(field) or "") for field in (
+        "chapter", "question_text", "question_latex", "correct_approach", "error_analysis",
+    ))
+    chapter = str(row.get("chapter") or "").strip()
+    if not usable and chapter in syllabus_points(row.get("subject")):
+        return chapter
+    point = primary_knowledge_point(row.get("subject"), usable, evidence)
+    return chapter if point == UNCLASSIFIED and chapter in syllabus_points(row.get("subject")) else point
+
+
+def _knowledge_statistics(conn) -> tuple[list[dict], list[dict]]:
+    """Return actionable point metrics and the five highest weekly priorities."""
+    questions = [dict(row) for row in conn.execute(
+        """SELECT id,subject,chapter,created_at,knowledge_points,mastery
+           FROM questions WHERE deleted_at IS NULL"""
+    )]
+    by_id = {row["id"]: row for row in questions}
+    attempts = [dict(row) for row in conn.execute(
+        """SELECT question_id,created_at,outcome FROM practice_attempts
+           WHERE confirmed_at IS NOT NULL ORDER BY created_at ASC"""
+    )]
+    events: dict[tuple[str, str], list[tuple[str, bool]]] = defaultdict(list)
+    groups: dict[tuple[str, str], dict] = {}
+    now = datetime.now(timezone.utc)
+    week_start = now - timedelta(days=7)
+    for row in questions:
+        point = _stats_point(row)
+        if not point or point == UNCLASSIFIED:
+            continue
+        key = (str(row.get("subject") or "unknown"), point)
+        group = groups.setdefault(key, {
+            "name": point, "subject": row.get("subject") or "unknown", "chapter": row.get("chapter") or "",
+            "error_count": 0, "question_count": 0, "recent_error_at": None,
+            "consecutive_error_count": 0, "weekly_error_count": 0, "mastery": 0.0,
+        })
+        group["error_count"] += 1
+        group["question_count"] += 1
+        group["mastery"] += float(row.get("mastery") or 0)
+        timestamp = str(row.get("created_at") or "")
+        events[key].append((timestamp, True))
+        if timestamp and (not group["recent_error_at"] or timestamp > group["recent_error_at"]):
+            group["recent_error_at"] = timestamp
+        try:
+            if datetime.fromisoformat(timestamp.replace("Z", "+00:00")) >= week_start:
+                group["weekly_error_count"] += 1
+        except (TypeError, ValueError):
+            pass
+    for attempt in attempts:
+        row = by_id.get(attempt.get("question_id"))
+        if not row:
+            continue
+        point = _stats_point(row)
+        key = (str(row.get("subject") or "unknown"), point)
+        if key not in groups:
+            continue
+        timestamp = str(attempt.get("created_at") or "")
+        is_error = attempt.get("outcome") in {"wrong", "partial"}
+        events[key].append((timestamp, is_error))
+        if is_error:
+            groups[key]["error_count"] += 1
+            groups[key]["recent_error_at"] = max(groups[key]["recent_error_at"] or "", timestamp)
+            try:
+                if datetime.fromisoformat(timestamp.replace("Z", "+00:00")) >= week_start:
+                    groups[key]["weekly_error_count"] += 1
+            except (TypeError, ValueError):
+                pass
+    result: list[dict] = []
+    for key, group in groups.items():
+        ordered = sorted(events[key], key=lambda item: item[0])
+        consecutive = 0
+        for _timestamp, is_error in reversed(ordered):
+            if not is_error:
+                break
+            consecutive += 1
+        group["consecutive_error_count"] = consecutive
+        group["mastery"] = round(group["mastery"] / group["question_count"], 4) if group["question_count"] else 0
+        try:
+            recent_days = max(0.0, (now - datetime.fromisoformat((group["recent_error_at"] or "").replace("Z", "+00:00"))).total_seconds() / 86400)
+        except (TypeError, ValueError):
+            recent_days = 365.0
+        group["priority_score"] = round(
+            group["weekly_error_count"] * 5 + group["consecutive_error_count"] * 3
+            + group["error_count"] + max(0.0, 5 - recent_days) + (1 - group["mastery"]) * 5,
+            2,
+        )
+        result.append(group)
+    result.sort(key=lambda item: (-item["error_count"], item["recent_error_at"] or "", item["name"]))
+    priority = sorted(result, key=lambda item: (-item["priority_score"], -item["error_count"], item["name"]))[:5]
+    return result, priority
 
 
 @router.get("/ai-accuracy")
@@ -92,6 +193,7 @@ def distribution(days: int = 30):
             "SELECT substr(datetime(created_at,'+8 hours'),1,10) day,COUNT(*) count FROM questions WHERE deleted_at IS NULL AND datetime(created_at,'+8 hours')>=datetime('now','+8 hours',?) GROUP BY day ORDER BY day",
             (f"-{days} day",),
         )]
+        knowledge_point_stats, weekly_priority = _knowledge_statistics(conn)
         repeat_rows = [dict(x) for x in conn.execute(
             """
             SELECT q.id,q.subject,q.chapter,q.question_label,q.created_at,q.review_count,q.correct_count,
@@ -244,4 +346,6 @@ def distribution(days: int = 30):
         # formal syllabus point, but it is not the point's display name.
         "repeat_syllabus_points": repeat_syllabus,
         "repeat_knowledge_points": repeat_knowledge,
+        "knowledge_point_stats": knowledge_point_stats,
+        "weekly_priority": weekly_priority,
     }

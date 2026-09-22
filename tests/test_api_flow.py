@@ -180,6 +180,40 @@ def test_multi_question_tasks_are_analyzed_with_their_own_labels(client, monkeyp
     assert all(client.get(f"/api/tasks/{task_id}").json()["status"] == "confirmed" for task_id in task_ids)
 
 
+def test_multi_question_failure_keeps_other_results_and_retries_only_failed(client, monkeypatch):
+    from app.services.ai import openai_compatible
+
+    async def fake_locate(self, images, question_labels, task_id=None):
+        return {"questions": [{"question_label": label, "regions": [{"image_index": 0, "x": 0.05, "y": 0.1, "width": 0.8, "height": 0.2}]} for label in question_labels]}
+
+    async def fake_recognize(self, images, task_id=None, question_label=""):
+        if question_label == "第2题":
+            raise RuntimeError("第2题识别失败")
+        return {"subject": "math_calculus", "question_label": question_label, "question_text": question_label}
+
+    monkeypatch.setattr(openai_compatible.OpenAICompatibleClient, "locate_questions", fake_locate)
+    monkeypatch.setattr(openai_compatible.OpenAICompatibleClient, "recognize_and_analyze", fake_recognize)
+    response = client.post(
+        "/api/tasks/upload",
+        files=[("files", ("page.jpg", jpeg_bytes(), "image/jpeg"))],
+        data={"image_types": "question", "multi_question": "true", "question_labels": "2,4"},
+    )
+    task_ids = response.json()["ids"]
+    for task_id in task_ids:
+        asyncio.run(process_task(task_id))
+    first = client.get(f"/api/tasks/{task_ids[0]}").json()
+    second = client.get(f"/api/tasks/{task_ids[1]}").json()
+    assert first["status"] == "failed"
+    assert second["status"] == "confirmed"
+    assert first["batch"]["progress_label"] == "已完成 1/2 题，失败 1 题"
+    assert first["batch"]["failed_ids"] == [task_ids[0]]
+    retry = client.post(f"/api/tasks/batches/{first['multi_batch_id']}/retry-failed")
+    assert retry.status_code == 200
+    assert retry.json()["updated"] == [task_ids[0]]
+    assert client.get(f"/api/tasks/{task_ids[1]}").json()["status"] == "confirmed"
+    assert client.get(f"/api/tasks/{task_ids[0]}").json()["status"] == "pending_recognition"
+
+
 def test_multi_question_locator_failure_is_reused_by_waiting_tasks(client, monkeypatch):
     from app.services.ai import openai_compatible
 

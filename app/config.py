@@ -16,11 +16,16 @@ class Settings(BaseSettings):
     ai_model: str = "gpt-4o-mini"
     ai_timeout: float = 180
     ai_max_retries: int = 1
+    # Limit simultaneous vision requests so relay services are not flooded.
+    ai_concurrency: int = 2
+    ai_retry_base_delay: float = 2
+    ai_retry_max_delay: float = 30
     ai_save_raw_response: bool = False
     ai_image_max_bytes: int = 12_000_000
     ai_image_compress: bool = True
     ai_image_max_edge: int = 1600
     ai_image_jpeg_quality: int = 85
+    thumbnail_max_edge: int = 480
     ai_confidence_threshold: float = 0.85
     ai_proxy: str = "auto"
     auto_backup_hours: int = 24

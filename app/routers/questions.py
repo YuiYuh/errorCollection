@@ -1,10 +1,11 @@
 import json
+import secrets
 from datetime import datetime, timedelta, timezone
 
 from typing import Any
 
 from fastapi import APIRouter, Body, HTTPException
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from ..db import db, json_load, now_iso
 from ..error_types import primary_error_type
@@ -97,6 +98,28 @@ class QuestionIn(BaseModel):
             return max(0.0, min(1.0, float(value)))
         except (TypeError, ValueError):
             return 0.0
+
+
+class ReanalysisImageEdit(BaseModel):
+    image_id: int
+    rotation: int = Field(0, description="0/90/180/270")
+    x: float = Field(0, ge=0, lt=1)
+    y: float = Field(0, ge=0, lt=1)
+    width: float = Field(1, gt=0, le=1)
+    height: float = Field(1, gt=0, le=1)
+
+    @model_validator(mode="after")
+    def valid_bounds(self):
+        if self.rotation not in (0, 90, 180, 270):
+            raise ValueError("旋转角度无效")
+        if self.x + self.width > 1.000001 or self.y + self.height > 1.000001:
+            raise ValueError("裁剪范围超出图片")
+        return self
+
+
+class ReanalysisIn(BaseModel):
+    recognition_hint: str = Field(default="", max_length=4000)
+    image_edits: list[ReanalysisImageEdit] = Field(default_factory=list, max_length=20)
 
 
 def normalize(row):
@@ -269,7 +292,7 @@ def save_question(payload: QuestionIn, question_id: int | None = None):
         if data.get("task_id"):
             conn.execute("UPDATE question_images SET question_id=? WHERE task_id=?", (question_id, data["task_id"]))
             # 任务回写为已确认，避免任务列表一直显示“等待确认”
-            conn.execute("UPDATE ai_tasks SET status='confirmed', error=NULL, updated_at=? WHERE id=?", (now, data["task_id"]))
+            conn.execute("UPDATE ai_tasks SET status='confirmed', error=NULL, error_category=NULL, updated_at=? WHERE id=?", (now, data["task_id"]))
         if should_sync_tags:
             _sync_tags(conn, question_id, data["tags"], "ai" if data.get("task_id") else "manual")
     return get_question(question_id)
@@ -312,7 +335,21 @@ def get_question(question_id: int):
             (question_id,),
         ).fetchone()
         images = conn.execute("SELECT * FROM question_images WHERE question_id=?", (question_id,)).fetchall()
-    value = normalize(row); value["images"] = [dict(x) for x in images]; return value
+        reanalysis = conn.execute(
+            """SELECT t.id,t.status,t.error,t.recognition_hint,t.created_at,t.updated_at,
+                      r.result_json,r.meta_json
+               FROM ai_tasks t LEFT JOIN ai_results r ON r.task_id=t.id
+               WHERE t.reanalysis_question_id=? ORDER BY t.id DESC LIMIT 20""",
+            (question_id,),
+        ).fetchall()
+    value = normalize(row); value["images"] = [dict(x) for x in images]
+    value["reanalysis_runs"] = []
+    for item in reanalysis:
+        run = dict(item)
+        run["result"] = json_load(run.pop("result_json"), None)
+        run["ai_meta"] = json_load(run.pop("meta_json"), None)
+        value["reanalysis_runs"].append(run)
+    return value
 
 
 @router.patch("/{question_id}")
@@ -339,8 +376,12 @@ def delete_question(question_id: int):
 
 
 @router.post("/{question_id}/reanalyze")
-def reanalyze(question_id: int):
+def reanalyze(question_id: int, payload: ReanalysisIn | None = None):
+    payload = payload or ReanalysisIn()
     with db() as conn:
+        question = conn.execute("SELECT id,question_label FROM questions WHERE id=? AND deleted_at IS NULL", (question_id,)).fetchone()
+        if not question:
+            raise HTTPException(404, "错题不存在")
         row = conn.execute("""
             SELECT qi.task_id
             FROM question_images qi
@@ -349,6 +390,67 @@ def reanalyze(question_id: int):
             ORDER BY qi.id DESC
             LIMIT 1
         """, (question_id,)).fetchone()
-        if not row: raise HTTPException(400, "该错题没有关联图片")
-        conn.execute("UPDATE ai_tasks SET status='pending_recognition',error=NULL,updated_at=? WHERE id=?", (now_iso(), row[0]))
-    return {"task_id": row[0], "status": "pending_recognition"}
+        if not row:
+            raise HTTPException(400, "该错题没有关联图片")
+        parent_task_id = row[0]
+        source_images = conn.execute(
+            "SELECT * FROM question_images WHERE question_id=? ORDER BY id", (question_id,)
+        ).fetchall()
+        source_ids = {int(item["id"]) for item in source_images}
+        edits = {item.image_id: item.model_dump(exclude={"image_id"}) for item in payload.image_edits}
+        unknown = sorted(set(edits) - source_ids)
+        if unknown:
+            raise HTTPException(422, "裁剪图片不属于这道错题")
+        now = now_iso()
+        cur = conn.execute(
+            """INSERT INTO ai_tasks(
+                 status,error,question_label,recognition_hint,crop_ready,created_at,updated_at,
+                 attempts,idempotency_key,reanalysis_question_id,reanalysis_parent_task_id
+                   ) VALUES('pending_recognition',NULL,?,?,1,?,?,0,?,?,?)""",
+            (question["question_label"], payload.recognition_hint.strip() or None, now, now,
+             secrets.token_urlsafe(16), question_id, parent_task_id),
+        )
+        task_id = cur.lastrowid
+        for image in source_images:
+            edit = edits.get(int(image["id"]))
+            copied = conn.execute(
+                """INSERT INTO question_images(
+                     question_id,task_id,image_type,original_path,compressed_path,mime_type,file_size,
+                     created_at,question_label,edit_json,sha256
+                   ) VALUES(NULL,?,?,?,?,?,?,?,?,?,?)""",
+                (task_id, image["image_type"], image["original_path"], image["compressed_path"], image["mime_type"],
+                 image["file_size"], now, image["question_label"], json.dumps(edit, ensure_ascii=False) if edit else None,
+                 image["sha256"]),
+            )
+            conn.execute("INSERT INTO ai_task_images(task_id,image_id) VALUES(?,?)", (task_id, copied.lastrowid))
+    return {"task_id": task_id, "status": "pending_recognition", "question_id": question_id}
+
+
+@router.post("/{question_id}/reanalyze/{task_id}/apply")
+def apply_reanalysis(question_id: int, task_id: int, fields: dict[str, list[str]] = Body(...)):
+    requested = fields.get("fields", [])
+    allowed = set(QuestionIn.model_fields) - {"task_id"}
+    unknown = sorted(set(requested) - allowed)
+    if unknown:
+        raise HTTPException(422, f"不支持的字段: {', '.join(unknown)}")
+    if not requested:
+        raise HTTPException(422, "至少选择一个要采纳的字段")
+    with db() as conn:
+        task = conn.execute(
+            "SELECT status,reanalysis_question_id FROM ai_tasks WHERE id=?", (task_id,)
+        ).fetchone()
+        if not task or task["reanalysis_question_id"] != question_id:
+            raise HTTPException(404, "重识别任务不存在")
+        if task["status"] not in {"reanalysis_completed", "analysis_completed", "recognition_completed"}:
+            raise HTTPException(409, "重识别尚未完成")
+        result = conn.execute("SELECT result_json FROM ai_results WHERE task_id=?", (task_id,)).fetchone()
+    new_result = json_load(result[0], {}) if result else {}
+    current = get_question(question_id)
+    merged = {name: current.get(name) for name in (set(QuestionIn.model_fields) - {"task_id"})}
+    for name in requested:
+        if name in new_result:
+            merged[name] = new_result[name]
+    saved = save_question(QuestionIn.model_validate(merged), question_id)
+    with db() as conn:
+        conn.execute("UPDATE ai_tasks SET status='reanalysis_applied',updated_at=? WHERE id=?", (now_iso(), task_id))
+    return {"question": saved, "task_id": task_id, "fields": requested}

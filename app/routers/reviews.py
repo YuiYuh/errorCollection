@@ -3,7 +3,7 @@ from contextlib import nullcontext
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from ..db import db, now_iso
-from ..timezone import LOCAL_TZ
+from ..timezone import day_bounds_utc
 
 router = APIRouter(prefix="/api", tags=["reviews"])
 
@@ -13,9 +13,8 @@ class ReviewIn(BaseModel):
 
 
 def _day_bounds() -> tuple[str, str]:
-    now = datetime.now(LOCAL_TZ)
-    start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    return start.astimezone(timezone.utc).isoformat(), (start + timedelta(days=1)).astimezone(timezone.utc).isoformat()
+    start, end = day_bounds_utc()
+    return start.isoformat(), end.isoformat()
 
 @router.get("/reviews/today")
 def today_reviews():

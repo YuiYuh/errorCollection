@@ -9,6 +9,7 @@ from PIL import Image
 
 from app.config import settings
 from app.db import db
+from app.timezone import day_bounds_utc
 
 
 def make_question(client: TestClient, **overrides) -> dict:
@@ -92,6 +93,22 @@ def test_distribution_endpoint_returns_all_sections(client):
     assert "repeat_questions" in data
     assert "repeat_knowledge_points" in data
     assert "repeat_syllabus_points" in data
+
+
+def test_distribution_returns_actionable_knowledge_point_statistics(client):
+    old = make_question(client, knowledge_points=["极限"])
+    recent = make_question(client, knowledge_points=["极限"])
+    with db() as conn:
+        conn.execute("UPDATE questions SET created_at=? WHERE id=?", ((datetime.now(timezone.utc) - timedelta(days=10)).isoformat(), old["id"]))
+        conn.execute("UPDATE questions SET created_at=? WHERE id=?", ((datetime.now(timezone.utc) - timedelta(days=1)).isoformat(), recent["id"]))
+    data = client.get("/api/stats/distribution").json()
+    point = next(item for item in data["knowledge_point_stats"] if item["name"] == "函数、极限、连续")
+    assert point["error_count"] == 2
+    assert point["question_count"] == 2
+    assert point["consecutive_error_count"] == 2
+    assert point["recent_error_at"].startswith((datetime.now(timezone.utc) - timedelta(days=1)).date().isoformat())
+    assert data["weekly_priority"][0]["name"] == "函数、极限、连续"
+    assert len(data["weekly_priority"]) <= 5
 
 
 def test_distribution_groups_repeat_questions_by_knowledge_point(client):
@@ -319,8 +336,7 @@ def test_integrity_check_accepts_get_and_post(client):
 def test_today_and_overdue_reviews_are_separated(client):
     today = make_question(client, question_text="今天复习")
     overdue = make_question(client, question_text="逾期复习")
-    now = datetime.now(timezone.utc)
-    start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    start, _ = day_bounds_utc()
     with db() as conn:
         conn.execute("UPDATE review_cards SET due_at=? WHERE question_id=?", ((start + timedelta(hours=1)).isoformat(), today["id"]))
         conn.execute("UPDATE review_cards SET due_at=? WHERE question_id=?", ((start - timedelta(days=1)).isoformat(), overdue["id"]))

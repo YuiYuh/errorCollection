@@ -9,7 +9,7 @@ from pathlib import Path
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field, model_validator, ValidationError
-from ..services.images import edit_image
+from ..services.images import edit_image, thumbnail_path
 
 from ..config import settings
 from ..db import db, json_load, now_iso
@@ -87,6 +87,37 @@ def _same_question_label(left: str | None, right: str | None) -> bool:
     return a == b
 
 
+def _batch_summary(conn, batch_id: str | None) -> dict | None:
+    if not batch_id:
+        return None
+    rows = conn.execute(
+        "SELECT id,status,question_label FROM ai_tasks WHERE multi_batch_id=? ORDER BY id",
+        (batch_id,),
+    ).fetchall()
+    if not rows:
+        return None
+    terminal_success = {"confirmed", "waiting_confirmation"}
+    terminal_failed = {"failed", "cancelled"}
+    active = [row for row in rows if row["status"] not in terminal_success | terminal_failed]
+    success_count = sum(row["status"] in terminal_success for row in rows)
+    failed_ids = [row["id"] for row in rows if row["status"] in terminal_failed]
+    current = active[0] if active else None
+    total = len(rows)
+    return {
+        "id": batch_id,
+        "total": total,
+        "success_count": success_count,
+        "failed_count": len(failed_ids),
+        "active_count": len(active),
+        "failed_ids": failed_ids,
+        "current_index": (next((index for index, row in enumerate(rows, 1) if current and row["id"] == current["id"]), None)),
+        "progress_label": (
+            f"第 {next((index for index, row in enumerate(rows, 1) if current and row['id'] == current['id']), 1)}/{total} 题处理中"
+            if current else (f"已完成 {success_count}/{total} 题，失败 {len(failed_ids)} 题" if failed_ids else f"全部 {total} 题处理完成")
+        ),
+    }
+
+
 @router.put('/{task_id}/draft')
 def save_draft(task_id: int, payload: DraftIn):
     with db() as conn:
@@ -119,9 +150,9 @@ class ImageEdit(BaseModel):
 
 
 @router.get("/images/{image_id}")
-def get_image(image_id: int, edited: bool = False):
+def get_image(image_id: int, edited: bool = False, thumbnail: bool = False):
     with db() as conn:
-        row = conn.execute("SELECT original_path,mime_type,edit_json FROM question_images WHERE id=?", (image_id,)).fetchone()
+        row = conn.execute("SELECT original_path,mime_type,edit_json,sha256 FROM question_images WHERE id=?", (image_id,)).fetchone()
     if not row or not Path(row[0]).exists():
         raise HTTPException(404, "图片不存在")
     if edited and row['edit_json']:
@@ -130,6 +161,17 @@ def get_image(image_id: int, edited: bool = False):
             return Response(data, media_type=mime)
         except Exception:
             raise HTTPException(422, '图片无法裁剪，请查看原图或重新选择图片')
+    if thumbnail:
+        try:
+            cached = thumbnail_path(row[0], row[3])
+            return FileResponse(
+                cached,
+                media_type="image/jpeg",
+                headers={"Cache-Control": "public, max-age=31536000, immutable"},
+            )
+        except Exception:
+            # A broken/unsupported source should still be viewable as the original.
+            pass
     return FileResponse(row[0], media_type=row[1] or "application/octet-stream")
 
 
@@ -235,7 +277,9 @@ async def upload_task(
 def list_tasks(limit: int = 20, offset: int = 0, include_practice: bool = False, status: str = ''):
     """最近的任务列表：刷新页面后也能看到进行中或失败的任务。"""
     with db() as conn:
-        where, args = [], []
+        # Reanalysis runs belong to a question's comparison history and do not
+        # clutter the normal upload/task queue.
+        where, args = ['t.reanalysis_question_id IS NULL'], []
         if not include_practice:
             where.append('t.id NOT IN (SELECT task_id FROM practice_attempts)')
         if status == 'active':
@@ -250,7 +294,7 @@ def list_tasks(limit: int = 20, offset: int = 0, include_practice: bool = False,
         condition = ' AND '.join(where) or '1=1'
         total = conn.execute(f'SELECT COUNT(*) FROM ai_tasks t WHERE {condition}', args).fetchone()[0]
         tasks = conn.execute(
-            f"SELECT t.id,t.status,t.error,t.question_label,t.created_at,t.updated_at,t.attempts,p.question_id practice_question_id,p.exam_id FROM ai_tasks t LEFT JOIN practice_attempts p ON p.task_id=t.id WHERE {condition} ORDER BY t.id DESC LIMIT ? OFFSET ?",
+            f"SELECT t.id,t.status,t.error,t.error_category,t.question_label,t.multi_batch_id,t.created_at,t.updated_at,t.attempts,p.question_id practice_question_id,p.exam_id FROM ai_tasks t LEFT JOIN practice_attempts p ON p.task_id=t.id WHERE {condition} ORDER BY t.id DESC LIMIT ? OFFSET ?",
             (*args, max(1, min(limit, 100)), max(0, offset)),
         ).fetchall()
         images = conn.execute("SELECT id,task_id,image_type,(edit_json IS NOT NULL) has_edit FROM question_images ORDER BY id").fetchall()
@@ -263,6 +307,8 @@ def list_tasks(limit: int = 20, offset: int = 0, include_practice: bool = False,
             ORDER BY qi.id DESC
             """
         ).fetchall()
+        batch_ids = {row["multi_batch_id"] for row in tasks if row["multi_batch_id"]}
+        batches = {batch_id: _batch_summary(conn, batch_id) for batch_id in batch_ids}
     by_task: dict[int, list] = {}
     for row in images:
         by_task.setdefault(row["task_id"], []).append({"id": row["id"], "image_type": row["image_type"], "has_edit": bool(row["has_edit"])})
@@ -274,6 +320,7 @@ def list_tasks(limit: int = 20, offset: int = 0, include_practice: bool = False,
                 **dict(task),
                 "images": by_task.get(task["id"], []),
                 "question_id": question_of.get(task["id"]),
+                "batch": batches.get(task["multi_batch_id"]),
             }
             for task in tasks
         ]
@@ -290,6 +337,7 @@ def task_payload(task_id: int):
         duplicates = candidates(conn, task_id, json_load(result[0], {}) if result else {})
         attempt = conn.execute('SELECT id,question_id FROM practice_attempts WHERE task_id=?', (task_id,)).fetchone()
         draft = conn.execute('SELECT result_json FROM task_drafts WHERE task_id=? AND task_version=?', (task_id, task['updated_at'])).fetchone()
+        batch = _batch_summary(conn, task["multi_batch_id"])
     parsed = json_load(result[0]) if result else None
     if isinstance(parsed, dict):
         normalize_knowledge(parsed)
@@ -301,6 +349,7 @@ def task_payload(task_id: int):
         "duplicates": duplicates,
         "practice_attempt": dict(attempt) if attempt else None,
         "draft": json_load(draft[0], {}) if draft else None,
+        "batch": batch,
     }
 
 
@@ -334,7 +383,7 @@ async def retry_task(task_id: int, payload: RetryIn | None = None):
         if payload is not None and payload.recognition_hint is not None:
             # 用户指出的识别问题只作为本次重识别提示，不改写原图或旧结果。
             conn.execute("UPDATE ai_tasks SET recognition_hint=? WHERE id=?", (payload.recognition_hint.strip()[:4000] or None, task_id))
-        conn.execute("UPDATE ai_tasks SET status='pending_recognition',error=NULL,updated_at=? WHERE id=?", (now_iso(), task_id))
+        conn.execute("UPDATE ai_tasks SET status='pending_recognition',error=NULL,error_category=NULL,updated_at=? WHERE id=?", (now_iso(), task_id))
     return task_payload(task_id)
 
 
@@ -358,9 +407,30 @@ def batch_retry_tasks(payload: BatchTaskIn):
             if row["status"] not in {"failed", "cancelled"}:
                 skipped.append({"id": task_id, "reason": "只有失败或已取消任务可以批量重试"})
                 continue
-            conn.execute("UPDATE ai_tasks SET status='pending_recognition',error=NULL,updated_at=? WHERE id=?", (now, task_id))
+            conn.execute("UPDATE ai_tasks SET status='pending_recognition',error=NULL,error_category=NULL,updated_at=? WHERE id=?", (now, task_id))
             updated.append(task_id)
     return {"updated": updated, "skipped": skipped, "count": len(updated)}
+
+
+@router.post("/batches/{batch_id}/retry-failed")
+def retry_failed_batch(batch_id: str):
+    """重试一个多题批次中失败的题，已成功的题保持不变。"""
+    now = now_iso()
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT id,status FROM ai_tasks WHERE multi_batch_id=? AND reanalysis_question_id IS NULL ORDER BY id",
+            (batch_id,),
+        ).fetchall()
+        if not rows:
+            raise HTTPException(404, "多题任务组不存在")
+        failed = [row["id"] for row in rows if row["status"] in {"failed", "cancelled"}]
+        if failed:
+            placeholders = ",".join("?" * len(failed))
+            conn.execute(
+                f"UPDATE ai_tasks SET status='pending_recognition',error=NULL,error_category=NULL,updated_at=? WHERE id IN ({placeholders})",
+                (now, *failed),
+            )
+    return {"batch_id": batch_id, "updated": failed, "count": len(failed), "status": "pending_recognition" if failed else "no_failed_tasks"}
 
 
 @router.post("/batch-cancel")

@@ -6,7 +6,7 @@ from collections import defaultdict
 
 from ..db import db, json_load, now_iso
 from ..config import settings
-from .ai.openai_compatible import OpenAICompatibleClient
+from .ai.openai_compatible import OpenAICompatibleClient, error_category
 from .backup import maybe_auto_backup
 
 log = logging.getLogger(__name__)
@@ -148,8 +148,8 @@ def requeue_orphans() -> int:
     placeholders = ",".join("?" * len(ORPHAN_STATUSES))
     with db() as conn:
         cur = conn.execute(
-            f"UPDATE ai_tasks SET status='pending_recognition', error=?, updated_at=? WHERE status IN ({placeholders})",
-            ("服务重启，任务已自动重新排队", now_iso(), *ORPHAN_STATUSES),
+            f"UPDATE ai_tasks SET status='pending_recognition', error=?, error_category=?, updated_at=? WHERE status IN ({placeholders})",
+            ("服务重启，任务已自动重新排队", "server", now_iso(), *ORPHAN_STATUSES),
         )
         count = cur.rowcount
     if count:
@@ -166,15 +166,17 @@ async def process_task(task_id: int) -> None:
         recognition_hint = task["recognition_hint"] or ""
         multi_batch_id = task["multi_batch_id"]
         crop_ready = bool(task["crop_ready"])
+        reanalysis_question_id = task["reanalysis_question_id"]
     if multi_batch_id and not crop_ready:
         try:
             await _prepare_multi_batch(task_id, multi_batch_id)
         except Exception as exc:
             message = str(exc)[:1000]
+            category = error_category(exc)
             with db() as conn:
                 conn.execute(
-                    "UPDATE ai_tasks SET status='failed',error=?,updated_at=? WHERE multi_batch_id=? AND status!='cancelled'",
-                    (message, now_iso(), multi_batch_id),
+                    "UPDATE ai_tasks SET status='failed',error=?,error_category=?,updated_at=? WHERE multi_batch_id=? AND status!='cancelled'",
+                    (message, category, now_iso(), multi_batch_id),
                 )
             log.warning("multi-page crop failed batch=%s error=%s", multi_batch_id, message)
             return
@@ -185,7 +187,7 @@ async def process_task(task_id: int) -> None:
             for row in rows
         ]
         attempt = conn.execute('SELECT p.question_id,q.* FROM practice_attempts p JOIN questions q ON q.id=p.question_id WHERE p.task_id=?', (task_id,)).fetchone()
-        claimed = conn.execute("UPDATE ai_tasks SET status='recognizing', attempts=attempts+1, updated_at=? WHERE id=? AND status IN ('uploaded','pending','pending_recognition','failed')", (now_iso(), task_id))
+        claimed = conn.execute("UPDATE ai_tasks SET status='recognizing', attempts=attempts+1, error_category=NULL, updated_at=? WHERE id=? AND status IN ('uploaded','pending','pending_recognition','failed')", (now_iso(), task_id))
         if not claimed.rowcount:
             return
         if attempt:
@@ -217,8 +219,8 @@ async def process_task(task_id: int) -> None:
             if not current or current['status'] == 'cancelled':
                 return
             conn.execute("INSERT OR REPLACE INTO ai_results(task_id,result_json,raw_response,created_at,meta_json) VALUES(?,?,?,?,?)", (task_id, json.dumps(result, ensure_ascii=False), json.dumps(raw, ensure_ascii=False) if raw else None, now_iso(), json.dumps(meta, ensure_ascii=False) if meta else None))
-            conn.execute("UPDATE ai_tasks SET status='recognition_completed', updated_at=? WHERE id=?", (now_iso(), task_id))
-            conn.execute("UPDATE ai_tasks SET status='analysis_completed', updated_at=? WHERE id=?", (now_iso(), task_id))
+            conn.execute("UPDATE ai_tasks SET status='recognition_completed', error_category=NULL, updated_at=? WHERE id=?", (now_iso(), task_id))
+            conn.execute("UPDATE ai_tasks SET status='analysis_completed', error_category=NULL, updated_at=? WHERE id=?", (now_iso(), task_id))
         # Archive every successful result immediately.  A low score is retained
         # as a review marker and never blocks the user's upload queue.
         from ..routers.questions import QuestionIn, save_question
@@ -231,17 +233,25 @@ async def process_task(task_id: int) -> None:
         result["task_id"] = task_id
         with db() as conn:
             conn.execute("UPDATE ai_results SET result_json=? WHERE task_id=?", (json.dumps(result, ensure_ascii=False), task_id))
+        if reanalysis_question_id:
+            # A reanalysis is deliberately isolated from the original wrong
+            # question.  Its result is shown for comparison and is only
+            # written to the question when the user explicitly applies fields.
+            with db() as conn:
+                conn.execute("UPDATE ai_tasks SET status='reanalysis_completed', error=NULL, error_category=NULL, updated_at=? WHERE id=?", (now_iso(), task_id))
+            return
         if not attempt:
             save_question(QuestionIn.model_validate(result))
         else:
             with db() as conn:
-                conn.execute("UPDATE ai_tasks SET status='waiting_confirmation', error=NULL, updated_at=? WHERE id=?", (now_iso(), task_id))
+                conn.execute("UPDATE ai_tasks SET status='waiting_confirmation', error=NULL, error_category=NULL, updated_at=? WHERE id=?", (now_iso(), task_id))
             return
         with db() as conn:
-            conn.execute("UPDATE ai_tasks SET status='confirmed', error=NULL, updated_at=? WHERE id=?", (now_iso(), task_id))
+            conn.execute("UPDATE ai_tasks SET status='confirmed', error=NULL, error_category=NULL, updated_at=? WHERE id=?", (now_iso(), task_id))
     except Exception as exc:
+        category = error_category(exc)
         with db() as conn:
-            conn.execute("UPDATE ai_tasks SET status='failed', error=?, updated_at=? WHERE id=? AND status!='cancelled'", (str(exc)[:1000], now_iso(), task_id))
+            conn.execute("UPDATE ai_tasks SET status='failed', error=?, error_category=?, updated_at=? WHERE id=? AND status!='cancelled'", (str(exc)[:1000], category, now_iso(), task_id))
         log.warning("task %s failed error=%s message=%s", task_id, type(exc).__name__, str(exc)[:300])
 
 
@@ -249,14 +259,20 @@ class TaskWorker:
     def __init__(self) -> None:
         self.stop_event = asyncio.Event()
         self.task: asyncio.Task | None = None
+        self.concurrency = max(1, int(settings.ai_concurrency))
+        self.semaphore = asyncio.Semaphore(self.concurrency)
+
+    async def _process_with_limit(self, task_id: int) -> None:
+        async with self.semaphore:
+            await process_task(task_id)
 
     async def run(self) -> None:
         ticks = 0
         while not self.stop_event.is_set():
             with db() as conn:
-                rows = conn.execute("SELECT id FROM ai_tasks WHERE status IN ('pending_recognition','uploaded','pending') ORDER BY id LIMIT 2").fetchall()
+                rows = conn.execute("SELECT id FROM ai_tasks WHERE status IN ('pending_recognition','uploaded','pending') ORDER BY id LIMIT ?", (self.concurrency,)).fetchall()
             if rows:
-                await asyncio.gather(*(process_task(row["id"]) for row in rows))
+                await asyncio.gather(*(self._process_with_limit(row["id"]) for row in rows))
             ticks += 1
             if ticks == 1 or ticks % 150 == 0:  # 启动时检查一次，之后约每 5 分钟检查
                 try:

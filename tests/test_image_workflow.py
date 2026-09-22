@@ -85,6 +85,23 @@ def test_upload_preview_and_ai_receive_same_crop(client, monkeypatch):
     assert json.loads(stored['edit_json']) == edit
 
 
+def test_original_thumbnail_is_cached_without_changing_source(client, work_dir):
+    raw = pixels()
+    task_id = upload(client, raw=raw).json()['id']
+    image = client.get(f'/api/tasks/{task_id}').json()['images'][0]
+    endpoint = f"/api/tasks/images/{image['id']}?thumbnail=true"
+    first = client.get(endpoint)
+    assert first.status_code == 200
+    assert first.headers['cache-control'].startswith('public, max-age=31536000')
+    with db() as conn:
+        original = Path(conn.execute('SELECT original_path FROM question_images WHERE id=?', (image['id'],)).fetchone()[0])
+    cache_files = list((work_dir / 'data' / 'thumbnail_cache').glob('*.jpg'))
+    assert len(cache_files) == 1
+    second = client.get(endpoint)
+    assert second.content == first.content
+    assert original.read_bytes() == raw
+
+
 @pytest.mark.parametrize('edits', [
     'not json', '{}', '[0]', '[false]', '[null,null]',
     '[{"rotation":45}]', '[{"x":0.7,"width":0.5}]',

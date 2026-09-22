@@ -49,7 +49,7 @@ AI_MODEL=支持图像输入的模型名
 
 如果供应商在境外需要走代理，把 `AI_PROXY` 设为 `auto`（读取 Windows 系统代理）或直接写地址，例如 `http://127.0.0.1:7890`；不需要代理就设为 `none`。
 
-其它可调项：`AI_TIMEOUT`（秒）、`AI_MAX_RETRIES`（失败重试次数）、`AI_IMAGE_COMPRESS`（发送前压缩）、`AI_IMAGE_MAX_EDGE`（长边像素）、`AI_IMAGE_JPEG_QUALITY`、`AI_CONFIDENCE_THRESHOLD`（低于该值会在确认页标记为不确定）、`AI_SAVE_RAW_RESPONSE`（是否保存模型原始响应，默认关闭）。部分兼容接口不支持 JSON 模式，系统会自动去掉 `response_format` 重试。
+其它可调项：`AI_TIMEOUT`（秒）、`AI_MAX_RETRIES`（失败重试次数）、`AI_CONCURRENCY`（同时请求数，默认 2）、`AI_RETRY_BASE_DELAY` / `AI_RETRY_MAX_DELAY`（指数退避的起始和上限秒数）、`AI_IMAGE_COMPRESS`（发送前压缩）、`AI_IMAGE_MAX_EDGE`（发送给 AI 的长边像素）、`AI_IMAGE_JPEG_QUALITY`、`THUMBNAIL_MAX_EDGE`（原图预览缩略图长边，默认 480）、`AI_CONFIDENCE_THRESHOLD`（低于该值会在确认页标记为不确定）、`AI_SAVE_RAW_RESPONSE`（是否保存模型原始响应，默认关闭）。网络、超时、429 和 5xx 会自动指数退避重试；认证、配置和请求格式错误会直接显示分类并停止重试。部分兼容接口不支持 JSON 模式，系统会自动去掉 `response_format` 重试。
 
 未配置 Key 时，任务会直接进入 `failed` 并给出明确原因，原图保留，配置后可重试；不会生成看似成功的结果。日志只记录任务ID、模型名、耗时、状态码和错误类型，不记录密钥。
 

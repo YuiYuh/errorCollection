@@ -1,5 +1,5 @@
 import { DateArchive } from './DateArchive';
-import React, { lazy, memo, Suspense, useCallback, useEffect, useState } from 'react';
+import React, { lazy, memo, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 // 公式渲染依赖 KaTeX，只在需要显示题目或分析结果时加载，缩短首页首屏脚本。
 const Formula = lazy(() => import('./RichContent').then((module) => ({ default: module.Formula })));
@@ -8,16 +8,17 @@ const QuestionContent = lazy(() => import('./RichContent').then((module) => ({ d
 const AnalysisContent = lazy(() => import('./RichContent').then((module) => ({ default: module.AnalysisContent })));
 import 'katex/dist/katex.min.css';
 import './style.css';
-import { CropEditor, ImageCompare, type EditedImage } from './ImageTools';
+import { CropEditor, ImageCompare, type EditedImage, type ImageEdit } from './ImageTools';
 
 type ImageItem = { id: number; image_type: string; mime_type: string; file_size: number; has_edit?: boolean };
 type AiMeta = { model: string; elapsed_ms: number; attempts: number; status_code: number };
 type SyllabusPoint = { chapter: string; name: string; count: number };
 type Syllabus = Record<string, SyllabusPoint[]>;
 type Task = {
-  id: number; status: string; result?: any; images: ImageItem[]; error?: string;
+  id: number; status: string; result?: any; images: ImageItem[]; error?: string; error_category?: string;
   ai_meta?: AiMeta; question_label?: string; recognition_hint?: string; created_at?: string; updated_at?: string;
   multi_batch_id?: string | null; crop_ready?: number;
+  batch?: { id: string; total: number; success_count: number; failed_count: number; active_count: number; failed_ids: number[]; current_index?: number; progress_label: string } | null;
   duplicates?: any[];
   draft?: any;
 };
@@ -113,6 +114,8 @@ const TASK_STATUS: Record<string, string> = {
   analyzing: '分析中',
   recognition_completed: '识别完成',
   analysis_completed: '分析完成',
+  reanalysis_completed: '重新识别完成',
+  reanalysis_applied: '已采纳重识别结果',
   waiting_confirmation: '等待确认',
   confirmed: '已确认',
   failed: '失败',
@@ -137,6 +140,13 @@ const joinBlocks = (blocks?: string[]) => (blocks || []).join('\n\n---\n\n');
 const splitBlocks = (text: string) => text.split(/\n\s*---\s*\n/).map((item) => item.trim()).filter(Boolean);
 const primaryErrorType = (types?: string[]) => ERROR_TYPE_OPTIONS.includes(types?.[0] || '') ? types![0] : '方法选择';
 const EMPTY_FILTER = { q: '', subject: '', chapter: '', knowledge_point: '', error_type: '', date_from: '', date_to: '', sort: 'created_desc' };
+const REANALYSIS_FIELDS: [string, string][] = [
+  ['question_text', '题目文字'], ['question_latex', '题目 LaTeX'],
+  ['user_solution_latex', '我的过程'], ['reference_solution_latex', '参考答案'],
+  ['first_error_step', '第一处错误'], ['error_analysis', '错误原因'],
+  ['correct_approach', '正确思路'], ['knowledge_points', '考纲知识点'],
+  ['error_types', '错误类型'], ['tags', '辅助标签'],
+];
 
 function KnowledgeSelect({ value, catalog, onChange }: { value: any; catalog: Syllabus; onChange: (next: any) => void }) {
   const entries = catalog[value.subject] || [];
@@ -192,6 +202,10 @@ const fieldConfidenceValue = (result: any, field: string) => {
   if (field === 'solution') return result?.user_solution_latex || result?.first_error_step || result?.error_analysis ? correction : 0;
   if (field === 'reference') return result?.reference_solution_latex ? correction : 0;
   return result?.subject && !['unknown', 'math1'].includes(result.subject) && result?.knowledge_points?.length ? Math.min(recognition, correction) : 0;
+};
+const AI_ERROR_CATEGORY_LABELS: Record<string, string> = {
+  configuration: '配置', authentication: '认证', rate_limit: '限流', timeout: '超时',
+  network: '网络', server: '服务端', invalid_request: '请求格式', invalid_response: '返回格式', unknown: '未知',
 };
 
 const PROJECT_SERVICES = {
@@ -382,9 +396,18 @@ function App() {
   const [draft, setDraft] = useState<any>(null);
   const [questions, setQuestions] = useState<any[]>([]);
   const [questionTotal, setQuestionTotal] = useState(0);
-  const [questionLimit, setQuestionLimit] = useState(100);
+  const [questionLoading, setQuestionLoading] = useState(false);
+  const questionSentinel = useRef<HTMLDivElement | null>(null);
+  const questionRequest = useRef(false);
   const [selected, setSelected] = useState<any | null>(null);
   const [editing, setEditing] = useState<any | null>(null);
+  const [reanalyzeHint, setReanalyzeHint] = useState('');
+  const [reanalyzeEdits, setReanalyzeEdits] = useState<Record<number, ImageEdit>>({});
+  const [reanalyzePreviews, setReanalyzePreviews] = useState<Record<number, string>>({});
+  const [reanalyzeCropImage, setReanalyzeCropImage] = useState<any | null>(null);
+  const [reanalyzeRun, setReanalyzeRun] = useState<any | null>(null);
+  const [reanalyzeFields, setReanalyzeFields] = useState<string[]>(REANALYSIS_FIELDS.map(([field]) => field));
+  const [reanalyzeBusy, setReanalyzeBusy] = useState(false);
   const [status, setStatus] = useState<any>();
   const [overview, setOverview] = useState<any>();
   const [accuracy, setAccuracy] = useState<any>();
@@ -421,11 +444,12 @@ function App() {
                       </span>
                       <span className="rowmeta">
                         <span className="chip">任务 #{item.id}</span>
+                        {item.batch && <span className="chip color" style={{ '--chip-color': item.batch.failed_count ? 'var(--danger)' : 'var(--primary)' } as React.CSSProperties}>{item.batch.progress_label}</span>}
                         {item.attempts > 0 && <span className="chip">尝试 {item.attempts} 次</span>}
                         <span className="chip">{elapsed(item.updated_at || item.created_at)}</span>
                         {item.images?.length > 0 && <span className="chip">{item.images.length} 张图</span>}
                       </span>
-                      {item.error && <span className="rowmeta"><span className="chip color" style={{ '--chip-color': 'var(--danger)' } as React.CSSProperties}>{String(item.error).slice(0, 80)}</span></span>}
+                      {item.error && <span className="rowmeta"><span className="chip color" style={{ '--chip-color': 'var(--danger)' } as React.CSSProperties}>{item.error_category ? `${AI_ERROR_CATEGORY_LABELS[item.error_category] || item.error_category}：` : ''}{String(item.error).slice(0, 80)}</span></span>}
                       <span className="rowmeta">
                         {item.status === 'confirmed' && item.question_id
                           ? <button className="ghost" onClick={() => openQuestion(item.question_id)}>查看错题</button>
@@ -436,6 +460,7 @@ function App() {
                             catch (err: any) { setError(err.message); }
                           }}>重试</button>
                         )}
+                        {item.batch?.failed_count > 0 && item.batch.failed_ids?.[0] === item.id && <button className="ghost" onClick={() => retryFailedBatch(item.batch.id)}>只重试失败题</button>}
                         {BUSY_STATUSES.includes(item.status) && (
                           <button className="ghost" onClick={async () => {
                             try { await api('/tasks/' + item.id, { method: 'DELETE' }); loadTasks(); setTask(null); setNotice(`任务 #${item.id} 已取消`); }
@@ -451,15 +476,29 @@ function App() {
     window.localStorage.setItem('wrongbook-task-filter', centerFilter);
   }, [centerFilter]);
 
+  const QUESTION_PAGE_SIZE = 30;
   const loadQuestions = useCallback(() => {
     const query = new URLSearchParams();
     Object.entries(filter).forEach(([key, value]) => { if (value) query.set(key, String(value)); });
-    // Fetch pages so old matching questions remain reachable beyond the first 100.
-    return Promise.all(Array.from({ length: Math.ceil(questionLimit / 100) }, (_, page) =>
-      api('/questions?' + query.toString() + `&limit=100&offset=${page * 100}`)))
-      .then((pages) => { setQuestions(pages.flatMap((data) => data.items || [])); setQuestionTotal(pages[0]?.total || 0); })
-      .catch((err: Error) => setError(err.message));
-  }, [filter, questionLimit]);
+    questionRequest.current = true;
+    setQuestionLoading(true);
+    return api('/questions?' + query.toString() + `&limit=${QUESTION_PAGE_SIZE}&offset=0`)
+      .then((data) => { setQuestions(data.items || []); setQuestionTotal(data.total || 0); })
+      .catch((err: Error) => setError(err.message))
+      .finally(() => { questionRequest.current = false; setQuestionLoading(false); });
+  }, [filter]);
+
+  const loadMoreQuestions = useCallback(() => {
+    if (questionRequest.current || questionLoading || questions.length >= questionTotal) return Promise.resolve();
+    const query = new URLSearchParams();
+    Object.entries(filter).forEach(([key, value]) => { if (value) query.set(key, String(value)); });
+    questionRequest.current = true;
+    setQuestionLoading(true);
+    return api('/questions?' + query.toString() + `&limit=${QUESTION_PAGE_SIZE}&offset=${questions.length}`)
+      .then((data) => { setQuestions((current) => [...current, ...(data.items || [])]); setQuestionTotal(data.total || questionTotal); })
+      .catch((err: Error) => setError(err.message))
+      .finally(() => { questionRequest.current = false; setQuestionLoading(false); });
+  }, [filter, questionLoading, questionTotal, questions.length]);
 
   const loadReviews = useCallback((scope: string) => {
     const path = scope === 'overdue' ? '/reviews/overdue' : '/reviews/today';
@@ -518,6 +557,16 @@ function App() {
     } catch (err: any) { setError(err.message); }
   }, [centerSelected, centerPage, centerFilter]);
 
+  const retryFailedBatch = useCallback(async (batchId: string) => {
+    try {
+      const result = await jsonPost(`/tasks/batches/${encodeURIComponent(batchId)}/retry-failed`, {});
+      setNotice(result.count ? `已重试 ${result.count} 道失败题，已完成的题保持不变` : '当前批次没有失败题');
+      loadTasks();
+      const data = await api(`/tasks?include_practice=true&limit=20&offset=${centerPage * 20}&status=${centerFilter}`);
+      setCenterTasks(data.items || []); setCenterTotal(data.total || 0);
+    } catch (err: any) { setError(err.message); }
+  }, [centerPage, centerFilter, loadTasks]);
+
   const openTask = useCallback(async (taskId: number) => {
     try {
       const detail = await api('/tasks/' + taskId);
@@ -553,7 +602,14 @@ function App() {
   // The错题本 is paginated and can be large; defer its first query until the
   // user opens that tab instead of blocking the homepage startup.
   useEffect(() => { if (tab === 'list') loadQuestions(); }, [tab, filter, loadQuestions]);
-  useEffect(() => { setQuestionLimit(100); }, [filter]);
+  useEffect(() => {
+    if (tab !== 'list' || !questionSentinel.current) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) loadMoreQuestions();
+    }, { rootMargin: '500px' });
+    observer.observe(questionSentinel.current);
+    return () => observer.disconnect();
+  }, [tab, loadMoreQuestions]);
 
   useEffect(() => { setTaskLabel(task?.question_label || ''); }, [task?.id, task?.question_label]);
   useEffect(() => { setRecognitionHint(task?.recognition_hint || ''); }, [task?.id, task?.recognition_hint]);
@@ -566,7 +622,7 @@ function App() {
       loadTasks();
       return;
     }
-    if (!ACTIVE_STATUSES.includes(task.status)) return;
+    if (!ACTIVE_STATUSES.includes(task.status) && !task.batch?.active_count) return;
     const timer = window.setInterval(() => {
       if (document.hidden) return;
       api('/tasks/' + task.id)
@@ -577,7 +633,7 @@ function App() {
         .catch(() => {});
     }, 2000);
     return () => window.clearInterval(timer);
-  }, [task?.id, task?.status, tab, loadTasks]);
+  }, [task?.id, task?.status, task?.batch?.active_count, tab, loadTasks]);
 
   useEffect(() => {
     if (!task || !ACTIVE_STATUSES.includes(task.status)) return;
@@ -781,10 +837,51 @@ function App() {
     try {
       setSelected(await api('/questions/' + id));
       setEditing(null); setTab('detail');
+      setReanalyzeRun(null); setReanalyzeHint(''); setReanalyzeEdits({}); setReanalyzePreviews({});
     } catch (err: any) {
       setError(err.message);
     }
   }
+
+  async function startReanalysis() {
+    if (!selected) return;
+    setReanalyzeBusy(true); setError('');
+    try {
+      const created = await jsonPost(`/questions/${selected.id}/reanalyze`, {
+        recognition_hint: reanalyzeHint.trim(),
+        image_edits: Object.entries(reanalyzeEdits).map(([image_id, edit]) => ({ image_id: Number(image_id), ...edit })),
+      });
+      setReanalyzeRun(await api(`/tasks/${created.task_id}`));
+      setNotice('已创建独立重识别任务，原错题不会被覆盖');
+    } catch (err: any) { setError(err.message); }
+    finally { setReanalyzeBusy(false); }
+  }
+
+  async function applyReanalysis() {
+    if (!selected || !reanalyzeRun || !reanalyzeFields.length) return;
+    setReanalyzeBusy(true); setError('');
+    try {
+      const result = await jsonPost(`/questions/${selected.id}/reanalyze/${reanalyzeRun.id}/apply`, { fields: reanalyzeFields });
+      setSelected(result.question); setReanalyzeRun(null); setNotice(`已采纳 ${reanalyzeFields.length} 个字段，原图和其余字段保持不变`);
+      loadQuestions();
+    } catch (err: any) { setError(err.message); }
+    finally { setReanalyzeBusy(false); }
+  }
+
+  useEffect(() => {
+    if (!reanalyzeRun || !ACTIVE_STATUSES.includes(reanalyzeRun.status)) return;
+    const timer = window.setInterval(async () => {
+      try {
+        const next = await api('/tasks/' + reanalyzeRun.id);
+        setReanalyzeRun(next);
+        if (['reanalysis_completed', 'failed', 'cancelled', 'reanalysis_applied'].includes(next.status)) {
+          window.clearInterval(timer);
+          if (selected) setSelected(await api('/questions/' + selected.id));
+        }
+      } catch { /* keep the comparison available if a refresh is transiently unavailable */ }
+    }, 1800);
+    return () => window.clearInterval(timer);
+  }, [reanalyzeRun?.id, reanalyzeRun?.status, selected?.id]);
 
   async function saveQuestion() {
     if (!editing) return;
@@ -853,6 +950,8 @@ function App() {
   })));
   const errorItems = withColors(distribution?.error_types);
   const knowledgeItems = withColors(distribution?.knowledge_points);
+  const knowledgePointStats: any[] = distribution?.knowledge_point_stats || [];
+  const weeklyPriority: any[] = distribution?.weekly_priority || [];
   const syllabus: Syllabus = filters.syllabus || {};
   const syllabusEntries = syllabus[syllabusSubject] || [];
   const filterSyllabus = Object.entries(syllabus).filter(([subject]) => !filter.subject || subject === filter.subject
@@ -989,12 +1088,13 @@ function App() {
         {centerError && <p className="error" role="alert">任务列表更新失败：{centerError}，正在自动重试。</p>}
         {centerLoading ? <p role="status">正在加载任务…</p> : centerTasks.length ? centerTasks.map((item) => <article className="task-card" key={item.id}>
           <div className="cardhead"><label className="task-select"><input type="checkbox" checked={centerSelected.has(item.id)} onChange={(event) => setCenterSelected((current) => { const next = new Set(current); if (event.target.checked) next.add(item.id); else next.delete(item.id); return next; })} aria-label={`选择任务 ${item.id}`} /><b>#{item.id} · {item.practice_question_id ? '重做' : '上传'}{item.question_label ? ' · ' + item.question_label : ''}</b></label><span className="chip">{statusText(item.status)}</span></div>
-          <p className="muted">{new Date(item.created_at).toLocaleString()} · {item.images.length} 张原图已保存</p>
+          <p className="muted">{new Date(item.created_at).toLocaleString()} · {item.images.length} 张原图已保存{item.batch ? ` · ${item.batch.progress_label}` : ''}</p>
           <ol className="task-steps" aria-label="任务进度">{['原图已保存', 'AI 分析', '等待确认', '完成'].map((label, i) => <li key={label} className={(item.status === 'confirmed' || i === 0 || (i === 1 && ['recognizing', 'pending_analysis', 'analyzing', 'recognition_completed', 'analysis_completed', 'waiting_confirmation'].includes(item.status)) || (i === 2 && item.status === 'waiting_confirmation')) ? 'done' : ''}>{label}</li>)}</ol>
           {item.error && <p className="error">{item.error}</p>}
           <div className="practice-actions">
             <button onClick={async () => { if (item.practice_question_id) { await openPractice(item.practice_question_id); try { setPracticeTask(await api('/tasks/' + item.id)); } catch (err: any) { setError(err.message); } } else if (item.status === 'confirmed' && item.question_id) openQuestion(item.question_id); else openTask(item.id); }}>{item.status === 'waiting_confirmation' ? '核对结果' : item.status === 'confirmed' ? '查看记录' : '查看详情'}</button>
             {['failed', 'cancelled'].includes(item.status) && <button onClick={async () => { try { const next = await jsonPost(`/tasks/${item.id}/retry`, {}); setCenterTasks((items) => items.map((t) => t.id === item.id ? { ...t, status: next.status, error: null } : t)); } catch (err: any) { setError(err.message); } }}>重试分析</button>}
+            {item.batch?.failed_count > 0 && item.batch.failed_ids?.[0] === item.id && <button onClick={() => retryFailedBatch(item.batch.id)}>只重试失败题（{item.batch.failed_count}）</button>}
           </div>
         </article>) : <Empty emoji="📋" text="这个状态下没有任务" />}
         <div className="practice-actions"><button disabled={!centerPage} onClick={() => setCenterPage((p) => p - 1)}>上一页</button><span>第 {centerPage + 1} 页 · 共 {centerTotal} 项</span><button disabled={(centerPage + 1) * 20 >= centerTotal} onClick={() => setCenterPage((p) => p + 1)}>下一页</button></div>
@@ -1006,6 +1106,18 @@ function App() {
             <h3>☀️ 今日待复习 {overview?.today_due ?? overview?.due ?? 0}</h3>
             <p className="muted">逾期 {overview?.overdue ?? 0} 题 · 到期的错题会出现在复习页，按忘记 / 困难 / 记得 / 熟练评价。</p>
             <button className="primary wide" onClick={() => go('review')}>开始复习</button>
+          </section>
+
+          <section>
+            <h3>🎯 本周最该复习的知识点</h3>
+            <p className="muted">根据错误次数、最近错误、连续错误和掌握度自动排序，点击即可查看对应错题。</p>
+            {weeklyPriority.length ? <div className="rows">
+              {weeklyPriority.map((point) => <button className="rowitem" key={`${point.subject}-${point.name}`} onClick={() => showKnowledge(point.name, point.subject)}>
+                <span className="ring" style={{ '--ring-color': subjectColor(point.subject) } as React.CSSProperties} />
+                <span className="rowmain"><span className="rowtitle">{point.name}</span><span className="rowmeta"><span className="chip">{subjectName(point.subject)}</span><span className="chip">错误 {point.error_count} 次</span><span className="chip">最近 {point.recent_error_at ? new Date(point.recent_error_at).toLocaleDateString() : '暂无'}</span><span className="chip">连续 {point.consecutive_error_count} 次</span><span className="chip">掌握度 {Math.round((point.mastery || 0) * 100)}%</span></span></span>
+                <span className="chev">›</span>
+              </button>)}
+            </div> : <Empty emoji="🎯" text="积累错题后会自动生成复习优先级" />}
           </section>
 
           <section>
@@ -1161,6 +1273,7 @@ function App() {
             {ACTIVE_STATUSES.includes(task.status) ? '识别中…' : recognitionHint.trim() ? '按提示重新识别' : '重新识别'}
           </button>
           <div className="statusrow"><span>状态</span><b>{statusText(task.status)}</b></div>
+          {task.batch && <div className="batch-progress" role="status"><b>{task.batch.progress_label}</b><span className="batch-progress-bar"><i style={{ width: `${Math.round(((task.batch.success_count + task.batch.failed_count) / Math.max(1, task.batch.total)) * 100)}%` }} /></span><small>{task.batch.success_count} 道完成 · {task.batch.failed_count} 道失败 · {task.batch.active_count} 道处理中</small>{task.batch.failed_count > 0 && <button className="ghost" onClick={() => retryFailedBatch(task.batch!.id)}>只重试失败题</button>}</div>}
           <div className="statusrow"><span>原图</span><b>{task.images?.length || 0} 张已保存</b></div>
           {task.ai_meta && (
             <>
@@ -1172,13 +1285,13 @@ function App() {
             <div className="thumbs">
               {task.images.map((image) => (
                 <div className="thumb saved" key={image.id}>
-                  <img src={'/api/tasks/images/' + image.id + (image.has_edit ? '?edited=true' : '')} alt={image.has_edit ? '本题裁剪图' : '原图'} />
+                  <img loading="lazy" src={'/api/tasks/images/' + image.id + (image.has_edit ? '?edited=true' : '?thumbnail=true')} alt={image.has_edit ? '本题裁剪图' : '原图'} />
                   <small>{IMAGE_LABELS[image.image_type] || image.image_type}</small>
                 </div>
               ))}
             </div>
           )}
-          {task.error && <div className="error">{task.error}</div>}
+          {task.error && <div className="error">{task.error_category ? <b>{AI_ERROR_CATEGORY_LABELS[task.error_category] || task.error_category}：</b> : null}{task.error}</div>}
           <button onClick={() => api('/tasks/' + task.id).then(setTask).catch((err: Error) => setError(err.message))}>刷新</button>
           {task.status === 'failed' && <button className="primary" onClick={retry}>重试分析</button>}
           {ACTIVE_STATUSES.includes(task.status) && (
@@ -1309,7 +1422,7 @@ function App() {
             <div className="cardhead"><h3>我的错题</h3><button className="ghost" onClick={() => go('trash')}>回收站</button></div>
             <input placeholder="搜索题目、公式、错误原因" value={filter.q} onChange={(event) => setFilter({ ...filter, q: event.target.value })} />
             <details>
-              <summary>筛选与排序（{questions.length} 条）</summary>
+              <summary>筛选与排序（已加载 {questions.length} / {questionTotal} 条）</summary>
               <div className="filtergrid">
                 <label>科目
                   <select value={filter.subject} onChange={(event) => setFilter({ ...filter, subject: event.target.value })}>
@@ -1367,7 +1480,10 @@ function App() {
                   </button>
                 )} />
             ) : <Empty emoji="🔍" text="没有符合条件的错题" />}
-            {questions.length < questionTotal && <button className="wide" onClick={() => setQuestionLimit((limit) => limit + 100)}>继续加载（已显示 {questions.length} / {questionTotal}）</button>}
+            <div ref={questionSentinel} className="list-sentinel" aria-hidden="true" />
+            {questions.length < questionTotal && <button className="wide" disabled={questionLoading} onClick={() => loadMoreQuestions()}>
+              {questionLoading ? '加载中…' : `继续加载（已显示 ${questions.length} / ${questionTotal}）`}
+            </button>}
           </section>
         </>
       )}
@@ -1400,12 +1516,53 @@ function App() {
               <div className="thumbs">
                 {selected.images?.map((image: any) => (
                   <div className="thumb saved" key={image.id}>
-                    <img src={'/api/tasks/images/' + image.id + (image.edit_json ? '?edited=true' : '')} alt={image.edit_json ? '本题裁剪图' : '原图'} />
+                    <img loading="lazy" src={'/api/tasks/images/' + image.id + (image.edit_json ? '?edited=true' : '?thumbnail=true')} alt={image.edit_json ? '本题裁剪图' : '原图'} />
                     <small>{IMAGE_LABELS[image.image_type] || image.image_type}</small>
                   </div>
                 ))}
               </div>
+              <details className="reanalyze-panel">
+                <summary>识别有误？重新识别这道题</summary>
+                <p className="muted">可以只框选出错区域并告诉 AI 哪里错了。每次重识别都会生成独立结果，原错题不会被直接覆盖。</p>
+                <label>指出上次识别哪里错了（可选）
+                  <textarea value={reanalyzeHint} onChange={(event) => setReanalyzeHint(event.target.value)} rows={3} placeholder="例如：第二行的 2π 被识别成 π；只核对题干，不要重算解法" />
+                </label>
+                <div className="reanalyze-images">
+                  {selected.images?.map((image: any) => (
+                    <div className="reanalyze-image" key={image.id}>
+                      <img loading="lazy" src={reanalyzePreviews[image.id] || `/api/tasks/images/${image.id}?thumbnail=true`} alt="待重新识别的原图" />
+                      <span>{reanalyzeEdits[image.id] ? '已设置局部范围' : '使用整张图'}</span>
+                      <button type="button" onClick={() => setReanalyzeCropImage(image)}>框选识别范围</button>
+                      {reanalyzeEdits[image.id] && <button type="button" className="ghost" onClick={() => { setReanalyzeEdits((current) => { const next = { ...current }; delete next[image.id]; return next; }); setReanalyzePreviews((current) => { const next = { ...current }; delete next[image.id]; return next; }); }}>恢复整张</button>}
+                    </div>
+                  ))}
+                </div>
+                <button className="primary wide" disabled={reanalyzeBusy} onClick={startReanalysis}>开始独立重新识别</button>
+              </details>
+              {!!selected.reanalysis_runs?.length && <details className="reanalyze-history">
+                <summary>重新识别历史（{selected.reanalysis_runs.length} 次）</summary>
+                {selected.reanalysis_runs.map((run: any) => <div className="rowmeta" key={run.id}>
+                  <span className="chip">任务 #{run.id}</span><span className="chip">{statusText(run.status)}</span>
+                  <button className="ghost" onClick={async () => { try { setReanalyzeRun(await api(`/tasks/${run.id}`)); } catch (err: any) { setError(err.message); } }}>查看对比</button>
+                </div>)}
+              </details>}
+              {reanalyzeRun && <div className="reanalyze-result">
+                <h3>新旧结果对比 · 任务 #{reanalyzeRun.id}</h3>
+                {reanalyzeRun.status === 'failed' && <p className="error">{reanalyzeRun.error || '重新识别失败，原错题仍可正常使用。'}</p>}
+                {reanalyzeRun.status === 'reanalysis_completed' && reanalyzeRun.result && <>
+                  <p className="muted">勾选要采纳的新字段，未勾选的字段保留原结果。</p>
+                  {REANALYSIS_FIELDS.map(([field, label]) => {
+                    const oldValue = selected[field];
+                    const newValue = reanalyzeRun.result[field];
+                    const format = (value: any) => Array.isArray(value) ? value.join('、') : String(value ?? '');
+                    return <label className="reanalyze-field" key={field}><input type="checkbox" checked={reanalyzeFields.includes(field)} onChange={(event) => setReanalyzeFields((current) => event.target.checked ? [...new Set([...current, field])] : current.filter((item) => item !== field))} /><b>{label}</b><span className="old-value">原：{format(oldValue) || '（空）'}</span><span className="new-value">新：{format(newValue) || '（未返回）'}</span></label>;
+                  })}
+                  <button className="primary wide" disabled={reanalyzeBusy || !reanalyzeFields.length} onClick={applyReanalysis}>采纳选中的新结果</button>
+                </>}
+                {ACTIVE_STATUSES.includes(reanalyzeRun.status) && <p className="muted">正在重新识别，页面会自动刷新…</p>}
+              </div>}
               <button className="danger wide" onClick={() => removeQuestion(selected.id)}>删除这道错题</button>
+              {reanalyzeCropImage && <CropEditor sourceUrl={`/api/tasks/images/${reanalyzeCropImage.id}`} onClose={() => setReanalyzeCropImage(null)} onSave={(value) => { setReanalyzeEdits((current) => { const next = { ...current }; if (value) next[reanalyzeCropImage.id] = value.edit; else delete next[reanalyzeCropImage.id]; return next; }); setReanalyzePreviews((current) => { const next = { ...current }; if (value) next[reanalyzeCropImage.id] = value.preview; else delete next[reanalyzeCropImage.id]; return next; }); setReanalyzeCropImage(null); }} />}
             </>
           )}
           {editing && (
@@ -1485,7 +1642,7 @@ function App() {
           <div className="cardhead"><h3>独立重做</h3><button className="ghost" onClick={() => openQuestion(practiceQuestion.id)}>返回详情</button></div>
           <p className="muted">先自己完成，再拍照上传。AI 会对照历史错误判断这次是否重犯。</p>
           <QuestionContent question={practiceQuestion} />
-          {!!practiceQuestion.images?.length && <details><summary>查看原题图片（可能包含答案）</summary><div className="practice-previews">{practiceQuestion.images.map((item: any) => <a key={item.id} href={'/api/tasks/images/' + item.id} target="_blank" rel="noreferrer"><img src={'/api/tasks/images/' + item.id} alt="原题" /></a>)}</div></details>}
+          {!!practiceQuestion.images?.length && <details><summary>查看原题图片（可能包含答案）</summary><div className="practice-previews">{practiceQuestion.images.map((item: any) => <a key={item.id} href={'/api/tasks/images/' + item.id} target="_blank" rel="noreferrer"><img loading="lazy" src={'/api/tasks/images/' + item.id + '?thumbnail=true'} alt="原题" /></a>)}</div></details>}
           <div className="practice-actions">
             <label className="file-picker"><span>📷 拍照</span><input type="file" accept="image/*" capture="environment" onChange={(event) => { const picked = Array.from(event.target.files || []); setPracticeFiles((current) => [...current, ...picked]); event.target.value = ''; }} /></label>
             <label className="file-picker"><span>🖼️ 相册多选</span><input type="file" accept="image/*" multiple onChange={(event) => { const picked = Array.from(event.target.files || []); setPracticeFiles((current) => [...current, ...picked]); event.target.value = ''; }} /></label>
@@ -1552,6 +1709,20 @@ function App() {
 
           {statsTab === 'tags' && (
             <>
+              <section>
+                <h3>🎯 本周最该复习的 5 个知识点</h3>
+                <p className="muted">按错误次数、最近错误时间和连续错误次数排序。</p>
+                {weeklyPriority.length ? <div className="rows">{weeklyPriority.map((item) => <button className="rowitem" key={`${item.subject}-${item.name}`} onClick={() => showKnowledge(item.name, item.subject)}>
+                  <span className="rowmain"><span className="rowtitle">{item.name}</span><span className="rowmeta"><span className="chip">{subjectName(item.subject)}</span><span className="chip">错误 {item.error_count} 次</span><span className="chip">最近 {item.recent_error_at ? new Date(item.recent_error_at).toLocaleDateString() : '暂无'}</span><span className="chip">连续 {item.consecutive_error_count} 次</span></span></span><span className="chev">›</span>
+                </button>)}</div> : <Empty emoji="🎯" text="还没有可排序的知识点" />}
+              </section>
+              <section>
+                <h3>知识点错误统计</h3>
+                <p className="muted">每个考纲知识点的错误次数、最近错误时间和连续错误次数。</p>
+                {knowledgePointStats.length ? <div className="rows">{knowledgePointStats.map((item) => <button className="rowitem" key={`${item.subject}-${item.name}`} onClick={() => showKnowledge(item.name, item.subject)}>
+                  <span className="rowmain"><span className="rowtitle">{item.name}</span><span className="rowmeta"><span className="chip">{subjectName(item.subject)}</span><span className="chip">错误 {item.error_count} 次</span><span className="chip">题目 {item.question_count} 道</span><span className="chip">最近 {item.recent_error_at ? new Date(item.recent_error_at).toLocaleDateString() : '暂无'}</span><span className="chip">连续 {item.consecutive_error_count} 次</span></span></span><span className="chev">›</span>
+                </button>)}</div> : <Empty emoji="📊" text="还没有知识点统计" />}
+              </section>
               <section>
                 <h3>考纲知识点</h3>
                 <select value={syllabusSubject} onChange={(event) => setSyllabusSubject(event.target.value)}>
