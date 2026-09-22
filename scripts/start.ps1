@@ -35,14 +35,10 @@ if ($listener) {
   }
 }
 
-$bundled = 'C:\Users\YUI COM\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe'
 $pyArgs = @()
-if (Test-Path $bundled) { $py = $bundled }
-else {
-  $pythonCmd = Get-Command python -ErrorAction SilentlyContinue
-  if ($pythonCmd -and (Test-Path $pythonCmd.Source)) { $py = $pythonCmd.Source }
-  else { $pyCmd = Get-Command py -ErrorAction SilentlyContinue; if (-not $pyCmd) { throw 'Python was not found.' }; $py = $pyCmd.Source; $pyArgs = @('-3') }
-}
+$pythonCmd = Get-Command python -ErrorAction SilentlyContinue
+if ($pythonCmd -and (Test-Path $pythonCmd.Source)) { $py = $pythonCmd.Source }
+else { $pyCmd = Get-Command py -ErrorAction SilentlyContinue; if (-not $pyCmd) { throw 'Python was not found.' }; $py = $pyCmd.Source; $pyArgs = @('-3') }
 & $py @pyArgs -c "import fastapi,uvicorn,pydantic_settings,httpx" 2>$null
 if ($LASTEXITCODE -ne 0) {
   Write-Host 'Installing backend dependencies...'

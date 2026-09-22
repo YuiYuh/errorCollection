@@ -128,7 +128,7 @@ test('exact duplicate analysis is shown once and specific uncertainty stays visi
   const result = { first_error_step: '忽略拥塞避免阶段。', error_analysis: '忽略拥塞避免阶段。', uncertain_parts: ['末行符号无法辨认'] };
   const html = renderToStaticMarkup(React.createElement(AnalysisContent, { result }));
   assert.equal((html.match(/忽略拥塞避免阶段/g) || []).length, 1);
-  assert.ok(html.includes('待核对') && html.includes('末行符号无法辨认'));
+  assert.ok(html.includes('识别依据与限制') && html.includes('末行符号无法辨认'));
 });
 
 test('missing-material detection never collapses actual calculations or specific reasoning', () => {

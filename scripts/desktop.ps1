@@ -57,7 +57,7 @@ try {
   Write-Output "WrongBook desktop $Action failed. See logs\desktop.log."
   if (-not $NoNotification) {
     $shell = New-Object -ComObject WScript.Shell
-    $shell.Popup('操作未成功，请查看 D:\studyrecord\logs\desktop.log。请勿删除数据文件。', 0, '错题本', 16) | Out-Null
+    $shell.Popup(('操作未成功，请查看 {0}。请勿删除数据文件。' -f (Join-Path $root 'logs\desktop.log')), 0, '错题本', 16) | Out-Null
   }
 } finally {
   if ($locked) { $mutex.ReleaseMutex() }

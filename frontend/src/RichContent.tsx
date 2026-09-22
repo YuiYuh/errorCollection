@@ -47,12 +47,13 @@ export function ResultField({ label, value, onChange }: { label: string; value?:
 }
 
 export function AnalysisContent({ result }: { result: Parameters<typeof analysisPresentation>[0] }) {
-  const { sections, notices } = analysisPresentation(result);
+  const { sections, notices, uncertainty, notice } = analysisPresentation(result);
   return <div className="analysis-content">
     {result.needs_review && <p className="review-flag">低置信度结果，已自动加入错题本，请稍后快速核对。</p>}
+    {notice && <p className="analysis-notice">{notice}</p>}
     {sections.map(item => item.secondary
       ? <details key={item.field}><summary>{item.label}</summary><RichText text={item.value} /></details>
       : <div key={item.field}><h3>{item.label}</h3><RichText text={item.value} /></div>)}
-    {notices.length > 0 && <details><summary>识别依据与限制</summary>{notices.map((item, index) => <p key={index}><span className="muted">{item.label}：</span>{item.value}</p>)}</details>}
+    {(notices.length > 0 || uncertainty.length > 0) && <details><summary>识别依据与限制</summary>{notices.map((item, index) => <p key={`notice-${index}`}><span className="muted">{item.label}：</span>{item.value}</p>)}{uncertainty.map((item, index) => <p key={`uncertainty-${index}`}><span className="muted">不确定：</span>{item}</p>)}</details>}
   </div>;
 }

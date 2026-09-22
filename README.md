@@ -8,11 +8,15 @@
 
 重新创建桌面快捷方式：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-shortcuts.ps1`。
 
-复制 `.env.example` 为 `.env`，按需填写 `AI_BASE_URL/AI_API_KEY/AI_MODEL`。未配置 Key 仍可上传并保留原图，任务会返回明确的不确定信息。执行 `powershell -ExecutionPolicy Bypass -File scripts/start.ps1`，关闭执行 `scripts/stop.ps1`，状态执行 `scripts/status.ps1`。
+复制 `.env.example` 为 `.env`，按需填写 `AI_BASE_URL/AI_API_KEY/AI_MODEL`。未配置 Key 仍可上传并保留原图，任务会失败并给出明确原因，配置后可直接重试。执行 `powershell -ExecutionPolicy Bypass -File scripts/start.ps1`，关闭执行 `scripts/stop.ps1`，状态执行 `scripts/status.ps1`。
 
 开发前端：`cd frontend; npm install; npm run build`。生产访问 `http://127.0.0.1:8000`；Tailscale Serve 示例：`tailscale serve --https=443 http://127.0.0.1:8000`。iOS/iPadOS Web Push 需要 HTTPS、添加到主屏幕并授权；电脑关机期间本地提醒服务不会运行，重新启动时会扫描逾期任务。
 
 数据位于 `data/`、`uploads/`、`backups/`，关闭脚本不会删除它们。系统接口提供手动备份、导出和完整性检查。AI 任务状态可恢复：`uploaded/pending_recognition/recognizing/analyzing` 会在服务启动后继续，失败任务可重试。
+
+### 安全边界
+
+项目默认只监听 `127.0.0.1`，且当前接口没有登录鉴权；通过 Tailscale 使用时应只加入自己的可信设备，不要把 8000 端口或 Tailscale 服务公开到互联网。API Key 只放在本机 `.env`，不要提交到 Git。若要部署到公网，需要在反向代理或应用层增加身份认证、访问控制和 HTTPS。
 
 ### 保持在线
 
@@ -65,7 +69,7 @@ python -m pytest -q
 powershell -ExecutionPolicy Bypass -File scripts/test.ps1
 ```
 
-覆盖解析器置信度、接口配置化调用、图片压缩与视觉消息格式、日志不泄露密钥、上传后 AI 不可用时原图保留、确认后入库与正确率统计，以及“上传→队列→视觉接口→待确认→入库”的完整链路。
+覆盖解析器置信度、接口配置化调用、图片压缩与视觉消息格式、日志不泄露密钥、上传后 AI 不可用时原图保留、自动入库与低置信度标记、确认后入库与正确率统计，以及“上传→队列→视觉接口→自动归档”的完整链路。
 
 ## 功能一览
 
@@ -73,9 +77,9 @@ powershell -ExecutionPolicy Bypass -File scripts/test.ps1
 
 - 上传：手机拍照多图上传，每张图可标记题目 / 解题过程 / 参考答案，并可裁剪、旋转，只识别选中的区域。裁剪参数单独保存，原图不覆盖；导出同时包含原图和裁剪参数。上传时显示传输进度，原图先落盘再进 AI 队列。
 - 任务中心：首页、上传页、复习页均有入口，按状态查看普通上传和重做任务，每 3 秒刷新；失败可重试，待确认任务可重新打开，刷新页面也能找回已保存的任务。
-- 图片核对：确认页提供原图 / 裁剪图与识别结果对照，支持图片放大、修改 LaTeX 并实时预览；点击“保存修改草稿”后可下次继续，只有最终确认才入错题集。
+- 图片核对：结果页提供原图 / 裁剪图与识别结果对照，支持图片放大、修改 LaTeX 并实时预览；识别结果会先自动进入错题集，低置信度结果带核对标记，草稿修改可下次继续。
 - 内容显示：默认展示排版结果，点击“修改”才展开源码。408 优先展示完整题干，文字自动换行，局部公式由 KaTeX 渲染；兼容旧记录中误用的文字型 LaTeX，公式语法异常时明确提示并保留原文。前端内容回归测试：`cd frontend; npm test`。
-- 确认：AI 结果全部可改（题目、LaTeX、参考答案、第一处错误、正确思路、知识点、错误标签、408 代码块、难度），确认后才进入错题集。
+- 编辑：AI 结果全部可改（题目、LaTeX、参考答案、第一处错误、正确思路、知识点、错误标签、408 代码块、难度），保存修改后会更新对应错题。
 - 错题集：关键词搜索，按科目（含“408”四科合并）、章节、知识点、错误类型、日期区间筛选，支持按最该复习 / 最不熟 / 最难排序。
 - 复习：今日与逾期分开查看，四档评价后自动计算下次复习时间；首页显示反复出错的题目。
 - 统计：知识点分布、错误类型分布、科目分布、近 30 天新增、难度分布。

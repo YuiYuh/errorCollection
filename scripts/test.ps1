@@ -2,12 +2,10 @@
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
-$py = 'C:\Users\YUI COM\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe'
-if (-not (Test-Path $py)) {
-  $command = Get-Command python -ErrorAction SilentlyContinue
-  if (-not $command) { throw 'Python was not found.' }
-  $py = $command.Source
-}
+$command = Get-Command python -ErrorAction SilentlyContinue
+if (-not $command) { $command = Get-Command py -ErrorAction SilentlyContinue }
+if (-not $command) { throw 'Python was not found.' }
+$py = $command.Source
 Write-Host 'Running backend tests...'
 & $py -m pytest -q
 if ($LASTEXITCODE -ne 0) { throw 'Backend tests failed.' }
