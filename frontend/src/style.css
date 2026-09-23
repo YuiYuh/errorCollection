@@ -1055,7 +1055,18 @@ nav .nav-upload.active { background: #fde047; color: #1e1b2e; }
 
 @media (max-width: 640px) {
   main { padding: 28px 14px calc(132px + env(safe-area-inset-bottom)); }
-  header .headside { width: 100%; justify-content: center; margin-top: 8px; }
+  header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    column-gap: 8px;
+    row-gap: 8px;
+    align-items: start;
+  }
+  header .headmain { display: contents; }
+  header .headmain h1 { grid-column: 1; grid-row: 1; min-width: 0; }
+  header .headmain .sub { grid-column: 1 / -1; grid-row: 2; margin-top: 0; }
+  header .headside { grid-column: 2; grid-row: 1; width: auto; justify-content: flex-end; margin: 0; gap: 6px; }
+  header .aipill { max-width: 38vw; }
   .app-shell::before { left: -82px; }
   .app-shell::after { right: -45px; }
   .tab-review .review-actions, .tab-detail .review-actions { gap: 6px; }
