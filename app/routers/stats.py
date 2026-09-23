@@ -175,7 +175,7 @@ def ai_accuracy():
 @router.get("/distribution")
 def distribution(days: int = 30):
     """统计页一次性取回：知识点、错误类型、科目、难度和最近趋势。"""
-    days = max(1, min(days, 365))
+    days = max(1, min(days, 3650))
     with db() as conn:
         knowledge = [dict(x) for x in conn.execute(
             "SELECT value name,COUNT(*) count FROM questions, json_each(questions.knowledge_points) WHERE deleted_at IS NULL GROUP BY value ORDER BY count DESC"

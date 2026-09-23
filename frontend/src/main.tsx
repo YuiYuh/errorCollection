@@ -441,6 +441,11 @@ function App() {
   const [practiceHistory, setPracticeHistory] = useState<any[]>([]);
   const [attemptGrade, setAttemptGrade] = useState({ outcome: 'uncertain', same_error: 'unknown' });
   const [weekOffset, setWeekOffset] = useState(0);
+  const [calendarMonth, setCalendarMonth] = useState(() => {
+    const date = new Date();
+    return new Date(date.getFullYear(), date.getMonth(), 1);
+  });
+  const [calendarDate, setCalendarDate] = useState(() => localKey(new Date()));
   const [weekly, setWeekly] = useState<any | null>(null);
   const [trash, setTrash] = useState<any[]>([]);
   const [showAllRepeatKnowledge, setShowAllRepeatKnowledge] = useState(false);
@@ -517,7 +522,7 @@ function App() {
     return api(path + query).then((data) => setReviews(data.items || [])).catch((err: Error) => setError(err.message));
   }, [reviewKnowledgePoint]);
 
-  const loadDistribution = useCallback(() => api('/stats/distribution').then(setDistribution).catch(() => {}), []);
+  const loadDistribution = useCallback(() => api('/stats/distribution?days=3650').then(setDistribution).catch(() => {}), []);
   const loadBackups = useCallback(() => api('/system/backups').then((data) => setBackups(data.items || [])).catch(() => {}), []);
   const loadWeekly = useCallback(() => api('/learning/weekly?offset=' + weekOffset).then(setWeekly).catch((err: Error) => setError(err.message)), [weekOffset]);
   const loadTrash = useCallback(() => api('/learning/trash').then((data) => setTrash(data.items || [])).catch((err: Error) => setError(err.message)), []);
@@ -977,16 +982,25 @@ function App() {
   }
 
   const trendMap = new Map<string, number>((distribution?.trend || []).map((item: any) => [item.day, item.count]));
-  const week = Array.from({ length: 7 }, (_, index) => {
-    const date = new Date();
-    date.setDate(date.getDate() - (6 - index));
-    return {
-      weekday: '日一二三四五六'[date.getDay()],
-      day: date.getDate(),
-      today: index === 6,
-      count: trendMap.get(localKey(date)) ?? 0,
-    };
+  const todayKey = localKey(new Date());
+  const monthYear = calendarMonth.getFullYear();
+  const monthIndex = calendarMonth.getMonth();
+  const monthDays = new Date(monthYear, monthIndex + 1, 0).getDate();
+  const monthOffset = (new Date(monthYear, monthIndex, 1).getDay() + 6) % 7;
+  const calendarCells = Array.from({ length: Math.ceil((monthOffset + monthDays) / 7) * 7 }, (_, index) => {
+    const day = index - monthOffset + 1;
+    if (day < 1 || day > monthDays) return null;
+    const date = new Date(monthYear, monthIndex, day);
+    const key = localKey(date);
+    return { key, day, count: trendMap.get(key) ?? 0, future: key > todayKey };
   });
+  const monthActivity = calendarCells.reduce((sum, cell) => sum + (cell?.count || 0), 0);
+  const selectedDayCount = trendMap.get(calendarDate) ?? 0;
+  const earliestCalendarMonth = new Date();
+  earliestCalendarMonth.setDate(1);
+  earliestCalendarMonth.setMonth(earliestCalendarMonth.getMonth() - 119);
+  const calendarAtEarliest = calendarMonth <= earliestCalendarMonth;
+  const calendarAtLatest = monthYear === new Date().getFullYear() && monthIndex === new Date().getMonth();
   const last30 = Array.from({ length: 30 }, (_, index) => {
     const date = new Date();
     date.setDate(date.getDate() - (29 - index));
@@ -1109,14 +1123,34 @@ function App() {
       </header>
 
       {tab === 'home' && (
-        <div className="week">
-          {week.map((item, index) => (
-            <div key={index} className={item.today ? 'today' : ''}>
-              {item.weekday}
-              <b>{item.day}</b>
-              {item.count > 0 && <span className="dot" />}
+        <div className="month-calendar" aria-label="错题记录月历">
+          <div className="month-calendar-head">
+            <div><strong>{monthYear}年{monthIndex + 1}月</strong><span>{monthActivity ? `这个月收录 ${monthActivity} 道错题` : '把每天的小进步收集起来'}</span></div>
+            <div className="month-calendar-nav">
+              <button aria-label="上个月" disabled={calendarAtEarliest} onClick={() => setCalendarMonth(new Date(monthYear, monthIndex - 1, 1))}>‹</button>
+              <button aria-label="下个月" disabled={calendarAtLatest} onClick={() => setCalendarMonth(new Date(monthYear, monthIndex + 1, 1))}>›</button>
             </div>
-          ))}
+          </div>
+          <div className="month-calendar-grid month-calendar-weekdays" aria-hidden="true">
+            {'一二三四五六日'.split('').map((day) => <span key={day}>{day}</span>)}
+          </div>
+          <div className="month-calendar-grid month-calendar-days">
+            {calendarCells.map((cell, index) => cell ? (
+              <button
+                key={cell.key}
+                className={`month-day heat-${Math.min(cell.count, 4)}${cell.key === todayKey ? ' today' : ''}${cell.key === calendarDate ? ' selected' : ''}`}
+                disabled={cell.future}
+                onClick={() => setCalendarDate(cell.key)}
+                title={`${cell.key} · 新增 ${cell.count} 道错题`}
+                aria-label={`${cell.key}，新增 ${cell.count} 道错题${cell.key === todayKey ? '，今天' : ''}`}
+                aria-pressed={cell.key === calendarDate}
+              >{cell.day}</button>
+            ) : <span key={`empty-${index}`} className="month-day-empty" />)}
+          </div>
+          <div className="month-calendar-foot">
+            <span>{calendarDate === todayKey ? '今天' : calendarDate} · {selectedDayCount} 道错题</span>
+            <button className="month-calendar-view" onClick={() => { setFilter({ ...EMPTY_FILTER, date_from: calendarDate, date_to: calendarDate }); go('list'); }}>查看当天错题 <span>›</span></button>
+          </div>
         </div>
       )}
 
