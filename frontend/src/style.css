@@ -711,7 +711,7 @@ input:focus, textarea:focus, select:focus { background: var(--surface); border-c
 .tab-home > section:nth-of-type(4) .chip { background: rgba(255,255,255,.56); color: #343238; }
 .tab-home > section h3 { font-size: 1.12rem; letter-spacing: -.03em; }
 .tab-home > section:nth-of-type(1) h3 { font-size: 1.3rem; }
-.tab-home .week { padding: 4px 0 24px; }
+.tab-home .week { padding: 4px 0 24px; margin-bottom: 22px; }
 .tab-home .week div { border-radius: 16px; }
 .tab-home .week div.today { background: #171717; color: #fff; }
 .tab-home .week div.today b { color: #fff; }
@@ -938,17 +938,17 @@ section:hover { border-color: var(--border); box-shadow: var(--neo-shadow); }
 .tab-home > section:nth-of-type(1)::after {
   content: "✦ TODAY";
   position: absolute;
-  top: -18px;
-  right: 16px;
+  top: -12px;
+  right: 14px;
   display: grid;
   place-items: center;
-  width: 74px;
-  height: 74px;
-  padding: 8px;
+  width: 54px;
+  height: 54px;
+  padding: 5px;
   border: 2px solid var(--border);
   border-radius: 50%;
   background: #fbcfe8;
-  font-size: .7rem;
+  font-size: .58rem;
   font-weight: 900;
   letter-spacing: .07em;
   transform: rotate(12deg);
