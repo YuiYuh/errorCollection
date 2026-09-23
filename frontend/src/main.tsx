@@ -1683,7 +1683,7 @@ function App() {
                     {question.review_prompt && <RichText text={'提示：' + question.review_prompt} />}
                     <div className="review-actions">
                       {REVIEW_BUTTONS.map(([rating, label]) => (
-                        <button key={rating} onClick={() => review(question.id, rating)}>{label}</button>
+                        <button className={`review-score review-score-${rating}`} key={rating} onClick={() => review(question.id, rating)}>{label}</button>
                       ))}
                     </div>
                     <button className="ghost" onClick={() => openQuestion(question.id)}>查看详情</button>
@@ -1715,7 +1715,7 @@ function App() {
             <p className="muted">核对 AI 判断，可手动修正，再选择复习结果保存。</p>
             <label>本次作答<select value={attemptGrade.outcome} onChange={(e) => setAttemptGrade({ ...attemptGrade, outcome: e.target.value })}>{[['correct', '完整正确'], ['partial', '部分正确'], ['wrong', '错误'], ['uncertain', '不确定']].map(([v, label]) => <option key={v} value={v}>{label}</option>)}</select></label>
             <label>是否重复历史同一处错误<select value={attemptGrade.same_error} onChange={(e) => setAttemptGrade({ ...attemptGrade, same_error: e.target.value })}><option value="unknown">不确定</option><option value="true">是</option><option value="false">否</option></select></label>
-            <div className="review-actions">{REVIEW_BUTTONS.map(([rating, label]) => <button disabled={busy} key={rating} onClick={() => confirmPractice(practiceTask.practice_attempt, rating)}>{label}</button>)}</div>
+            <div className="review-actions">{REVIEW_BUTTONS.map(([rating, label]) => <button className={`review-score review-score-${rating}`} disabled={busy} key={rating} onClick={() => confirmPractice(practiceTask.practice_attempt, rating)}>{label}</button>)}</div>
           </div>}
           {practiceTask?.status === 'confirmed' && <button onClick={() => setPracticeTask(null)}>开始新的重做</button>}
           {!!practiceHistory.length && <details><summary>历史作答与追加资料 · {practiceHistory.length} 次</summary>{practiceHistory.map((item) => <div className="statusrow" key={item.id}><span>{new Date(item.created_at).toLocaleString()}<br /><small className="muted">{item.source === 'duplicate' ? '追加资料' : ({ correct: '正确', partial: '部分正确', wrong: '错误', uncertain: '不确定' } as Record<string, string>)[item.outcome] || statusText(item.status)}</small></span><button onClick={async () => { try { setPracticeTask(await api('/tasks/' + item.task_id)); } catch (err: any) { setError(err.message); } }}>查看</button></div>)}</details>}
@@ -1935,7 +1935,7 @@ function App() {
         {NAV_ITEMS.slice(0, 2).map(([key, label]) => (
           <button
             key={key}
-            className={tab === key || (key === 'upload' && (tab === 'task' || tab === 'practice')) || (key === 'list' && (tab === 'detail' || tab === 'trash')) ? 'active' : ''}
+            className={tab === key || (key === 'list' && (tab === 'detail' || tab === 'trash')) ? 'active' : ''}
             onClick={() => go(key)}
           ><NavIcon name={key} /><span>{label}</span></button>
         ))}
