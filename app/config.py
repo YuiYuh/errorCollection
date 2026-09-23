@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     ai_image_max_edge: int = 1600
     ai_image_jpeg_quality: int = 85
     thumbnail_max_edge: int = 480
-    ai_confidence_threshold: float = 0.85
+    ai_confidence_threshold: float = 0.90
     ai_proxy: str = "auto"
     auto_backup_hours: int = 24
     auto_backup_keep: int = 7
