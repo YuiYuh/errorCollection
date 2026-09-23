@@ -805,7 +805,7 @@ body {
 }
 main {
   position: relative;
-  max-width: 720px;
+  max-width: 1100px;
   padding: 34px 18px calc(126px + env(safe-area-inset-bottom));
 }
 .app-shell::before {
