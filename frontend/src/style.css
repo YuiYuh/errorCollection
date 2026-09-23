@@ -671,6 +671,7 @@ section:hover { border-color: var(--border); box-shadow: 0 10px 30px rgba(0,0,0,
 .rowitem { border-radius: 14px; padding: 14px 10px; border-bottom-color: rgba(60,60,67,.10); }
 .rowitem:hover { background: rgba(118,118,128,.10); }
 .chip { border-radius: 999px; background: rgba(118,118,128,.10); border-color: transparent; padding: 4px 9px; }
+.low-confidence-chip { background: #ffe0e8 !important; color: #a52d50 !important; border: 1px solid rgba(165,45,80,.28) !important; font-weight: 750; }
 input, textarea, select { border-radius: 13px; border-color: transparent; background: rgba(118,118,128,.10); }
 input:focus, textarea:focus, select:focus { background: var(--surface); border-color: rgba(0,122,255,.35); box-shadow: 0 0 0 4px rgba(0,122,255,.10); outline: none; }
 .file-picker { border-radius: 14px; border-color: var(--border); background: rgba(118,118,128,.08); }

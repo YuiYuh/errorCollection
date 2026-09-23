@@ -1508,6 +1508,7 @@ function App() {
                       <span className="rowmeta">
                         <span className="chip color" style={{ '--chip-color': subjectColor(question.subject) } as React.CSSProperties}>{subjectName(question.subject)}</span>
                         <span className="chip">{question.chapter || '未分类'}</span>
+                        {question.needs_review && <span className="chip low-confidence-chip">低置信度 · 待核对</span>}
                         <span className="chip">掌握度 {Math.round((question.mastery || 0) * 100)}%</span>
                         <span className="chip">{difficultyName(question.difficulty)}</span>
                       </span>
