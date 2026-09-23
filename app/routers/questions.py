@@ -417,6 +417,19 @@ def delete_question(question_id: int):
     return {"ok": True}
 
 
+@router.post("/{question_id}/confirm-confidence")
+def confirm_question_confidence(question_id: int):
+    """Acknowledge a low-confidence recognition after the user checked it."""
+    with db() as conn:
+        cur = conn.execute(
+            "UPDATE questions SET needs_review=0,updated_at=? WHERE id=? AND deleted_at IS NULL",
+            (now_iso(), question_id),
+        )
+        if not cur.rowcount:
+            raise HTTPException(404, "错题不存在或已移入回收站")
+    return get_question(question_id)
+
+
 @router.post("/{question_id}/reanalyze")
 def reanalyze(question_id: int, payload: ReanalysisIn | None = None):
     payload = payload or ReanalysisIn()

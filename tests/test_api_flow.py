@@ -366,6 +366,22 @@ def test_questions_include_stable_daily_numbers(client):
     assert client.get(f"/api/questions/{second['id']}").json()['daily_number'] == 2
 
 
+def test_low_confidence_question_can_be_acknowledged(client):
+    created = client.post('/api/questions', json={
+        'question_text': '低置信度题目', 'confidence': 0.72, 'needs_review': True,
+    }).json()
+    assert bool(created['needs_review'])
+    assert created['confidence'] == 0.72
+
+    confirmed = client.post(f"/api/questions/{created['id']}/confirm-confidence", json={})
+    assert confirmed.status_code == 200
+    assert not confirmed.json()['needs_review']
+    assert confirmed.json()['confidence'] == 0.72
+
+    listed = {item['id']: item for item in client.get('/api/questions').json()['items']}
+    assert not listed[created['id']]['needs_review']
+
+
 def test_deleted_question_has_no_task_detail_link(client):
     task_id = upload(client)
     question = client.post(

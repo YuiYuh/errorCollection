@@ -857,6 +857,18 @@ function App() {
     }
   }
 
+  async function confirmQuestionConfidence() {
+    if (!selected?.needs_review) return;
+    try {
+      const updated = await jsonPost(`/questions/${selected.id}/confirm-confidence`, {});
+      setSelected(updated);
+      setNotice('已确认识别结果，低置信度待核对标记已清除');
+      loadQuestions();
+    } catch (err: any) {
+      setError(err.message);
+    }
+  }
+
   async function startReanalysis(fields: string[] = []) {
     if (!selected) return;
     const requestedFields = [...new Set(fields)];
@@ -1520,7 +1532,7 @@ function App() {
                       <span className="rowmeta">
                         <span className="chip color" style={{ '--chip-color': subjectColor(question.subject) } as React.CSSProperties}>{subjectName(question.subject)}</span>
                         <span className="chip">{question.chapter || '未分类'}</span>
-                        {question.needs_review && <span className="chip low-confidence-chip">低置信度 · 待核对</span>}
+                        <span className={`chip ${question.needs_review ? 'low-confidence-chip' : ''}`}>置信度 {Math.round((question.confidence || 0) * 100)}%{question.needs_review ? ' · 待核对' : ''}</span>
                         <span className="chip">掌握度 {Math.round((question.mastery || 0) * 100)}%</span>
                         <span className="chip">{difficultyName(question.difficulty)}</span>
                       </span>
@@ -1548,6 +1560,8 @@ function App() {
               <span className="chip color" style={{ '--chip-color': subjectColor(selected.subject) } as React.CSSProperties}>{subjectName(selected.subject)}</span>
               <span className="chip" style={{ marginLeft: 8 }}>{difficultyName(selected.difficulty)}</span>
               {selected.question_label && <span className="chip" style={{ marginLeft: 8 }}>{selected.question_label}</span>}
+              <span className={`chip ${selected.needs_review ? 'low-confidence-chip' : ''}`} style={{ marginLeft: 8 }}>识别置信度 {Math.round((selected.confidence || 0) * 100)}%{selected.needs_review ? ' · 待核对' : ''}</span>
+              {selected.needs_review && <button className="primary wide" onClick={confirmQuestionConfidence}>我已核对，确认识别结果</button>}
               <h2 style={{ marginTop: 10 }}>{selected.chapter || '未分类'}</h2>
               <QuestionContent question={selected} />
               <AnalysisContent result={selected} />
