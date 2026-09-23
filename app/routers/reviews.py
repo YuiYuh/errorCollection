@@ -16,45 +16,75 @@ def _day_bounds() -> tuple[str, str]:
     start, end = day_bounds_utc()
     return start.isoformat(), end.isoformat()
 
-@router.get("/reviews/today")
-def today_reviews():
+
+def _review_rows(scope: str, knowledge_point: str | None = None) -> list[dict]:
     start, end = _day_bounds()
+    due_clause = "rc.due_at<?" if scope == "overdue" else "rc.due_at>=? AND rc.due_at<?"
+    args: list[str] = [start] if scope == "overdue" else [start, end]
+    point_clause = ""
+    if knowledge_point:
+        point_clause = " AND EXISTS (SELECT 1 FROM json_each(q.knowledge_points) WHERE json_each.value=?)"
+        args.append(knowledge_point)
     with db() as conn:
-        rows = conn.execute(
-            """
+        rows = [dict(row) for row in conn.execute(
+            f"""
             SELECT q.*, rc.due_at,
                    (SELECT COUNT(*) FROM questions earlier
                     WHERE earlier.deleted_at IS NULL
                       AND substr(datetime(earlier.created_at,'+8 hours'), 1, 10) = substr(datetime(q.created_at,'+8 hours'), 1, 10)
                       AND (earlier.created_at < q.created_at OR (earlier.created_at = q.created_at AND earlier.id <= q.id))
-                   ) AS daily_number
+                   ) AS daily_number,
+                   (SELECT MAX(l.reviewed_at) FROM review_logs l WHERE l.question_id=q.id) AS last_reviewed_at,
+                   (SELECT COUNT(*) FROM review_logs l WHERE l.question_id=q.id AND l.rating='forgot') AS forgotten_count,
+                   COALESCE(
+                     (SELECT MAX(a.created_at) FROM practice_attempts a
+                      WHERE a.question_id=q.id AND a.confirmed_at IS NOT NULL AND a.outcome IN ('wrong','partial')),
+                     q.created_at
+                   ) AS recent_error_at
             FROM questions q JOIN review_cards rc ON rc.question_id=q.id
-            WHERE q.deleted_at IS NULL AND rc.due_at>=? AND rc.due_at<?
-            ORDER BY rc.due_at
+            WHERE q.deleted_at IS NULL AND {due_clause}{point_clause}
             """,
-            (start, end),
-        ).fetchall()
-    return {"items": [dict(x) for x in rows], "total": len(rows)}
+            args,
+        )]
+        attempts = [dict(row) for row in conn.execute(
+            "SELECT question_id, outcome, created_at FROM practice_attempts WHERE confirmed_at IS NOT NULL ORDER BY created_at DESC"
+        )]
+    by_question: dict[int, list[dict]] = {}
+    for attempt in attempts:
+        by_question.setdefault(int(attempt["question_id"]), []).append(attempt)
+    for row in rows:
+        streak = 0
+        for attempt in by_question.get(int(row["id"]), []):
+            if attempt.get("outcome") in {"wrong", "partial"}:
+                streak += 1
+            else:
+                break
+        row["consecutive_error_count"] = streak
+        try:
+            recent_error = datetime.fromisoformat(str(row.get("recent_error_at") or "").replace("Z", "+00:00"))
+            recent_days = max(0.0, (datetime.now(timezone.utc) - recent_error).total_seconds() / 86400)
+        except (TypeError, ValueError):
+            recent_days = 365.0
+        row["priority_score"] = round(
+            (1 - float(row.get("mastery") or 0)) * 100
+            + streak * 12
+            + int(row.get("forgotten_count") or 0) * 8
+            + max(0.0, 10 - recent_days)
+            + (20 if scope == "overdue" else 0),
+            2,
+        )
+    rows.sort(key=lambda row: (-row["priority_score"], row.get("due_at") or "", row["id"]))
+    return rows
+
+@router.get("/reviews/today")
+def today_reviews(knowledge_point: str | None = None):
+    rows = _review_rows("today", knowledge_point)
+    return {"items": rows, "total": len(rows), "knowledge_point": knowledge_point or ""}
 
 @router.get("/reviews/overdue")
-def overdue_reviews():
-    start, _ = _day_bounds()
-    with db() as conn:
-        rows = conn.execute(
-            """
-            SELECT q.*, rc.due_at,
-                   (SELECT COUNT(*) FROM questions earlier
-                    WHERE earlier.deleted_at IS NULL
-                      AND substr(datetime(earlier.created_at,'+8 hours'), 1, 10) = substr(datetime(q.created_at,'+8 hours'), 1, 10)
-                      AND (earlier.created_at < q.created_at OR (earlier.created_at = q.created_at AND earlier.id <= q.id))
-                   ) AS daily_number
-            FROM questions q JOIN review_cards rc ON rc.question_id=q.id
-            WHERE q.deleted_at IS NULL AND rc.due_at<?
-            ORDER BY rc.due_at
-            """,
-            (start,),
-        ).fetchall()
-    return {"items": [dict(x) for x in rows], "total": len(rows)}
+def overdue_reviews(knowledge_point: str | None = None):
+    rows = _review_rows("overdue", knowledge_point)
+    return {"items": rows, "total": len(rows), "knowledge_point": knowledge_point or ""}
 
 @router.post("/questions/{question_id}/review")
 def review(question_id: int, payload: ReviewIn):

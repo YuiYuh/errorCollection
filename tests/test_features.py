@@ -345,3 +345,19 @@ def test_today_and_overdue_reviews_are_separated(client):
     overview = client.get("/api/stats/overview").json()
     assert overview["today_due"] == 1
     assert overview["overdue"] == 1
+
+
+def test_review_plan_filters_by_knowledge_point_and_prioritizes_weakness(client):
+    weak = make_question(client, question_text="薄弱题", knowledge_points=["极限"])
+    strong = make_question(client, question_text="熟练题", knowledge_points=["极限"])
+    other = make_question(client, question_text="其他知识点", knowledge_points=["导数"])
+    start, _ = day_bounds_utc()
+    with db() as conn:
+        for item in (weak, strong, other):
+            conn.execute("UPDATE review_cards SET due_at=? WHERE question_id=?", ((start + timedelta(hours=1)).isoformat(), item["id"]))
+        conn.execute("UPDATE questions SET mastery=? WHERE id=?", (0.05, weak["id"]))
+        conn.execute("UPDATE questions SET mastery=? WHERE id=?", (0.95, strong["id"]))
+    response = client.get("/api/reviews/today", params={"knowledge_point": "函数、极限、连续"})
+    assert response.status_code == 200
+    assert [item["question_text"] for item in response.json()["items"]] == ["薄弱题", "熟练题"]
+    assert all(item["knowledge_points"] == '["函数、极限、连续"]' for item in response.json()["items"])

@@ -415,6 +415,7 @@ function App() {
   const [filters, setFilters] = useState<any>({ chapters: [], knowledge_points: [], error_types: [] });
   const [filter, setFilter] = useState(EMPTY_FILTER);
   const [reviewScope, setReviewScope] = useState('today');
+  const [reviewKnowledgePoint, setReviewKnowledgePoint] = useState('');
   const [reviews, setReviews] = useState<any[]>([]);
   const [backups, setBackups] = useState<any[]>([]);
   const [selfTest, setSelfTest] = useState<{ running: boolean; data?: any }>({ running: false });
@@ -500,10 +501,11 @@ function App() {
       .finally(() => { questionRequest.current = false; setQuestionLoading(false); });
   }, [filter, questionLoading, questionTotal, questions.length]);
 
-  const loadReviews = useCallback((scope: string) => {
+  const loadReviews = useCallback((scope: string, point = reviewKnowledgePoint) => {
     const path = scope === 'overdue' ? '/reviews/overdue' : '/reviews/today';
-    return api(path).then((data) => setReviews(data.items || [])).catch((err: Error) => setError(err.message));
-  }, []);
+    const query = point ? `?knowledge_point=${encodeURIComponent(point)}` : '';
+    return api(path + query).then((data) => setReviews(data.items || [])).catch((err: Error) => setError(err.message));
+  }, [reviewKnowledgePoint]);
 
   const loadDistribution = useCallback(() => api('/stats/distribution').then(setDistribution).catch(() => {}), []);
   const loadBackups = useCallback(() => api('/system/backups').then((data) => setBackups(data.items || [])).catch(() => {}), []);
@@ -918,6 +920,13 @@ function App() {
     } catch (err: any) {
       setError(err.message);
     }
+  }
+
+  function startKnowledgeReview(point: string) {
+    setReviewKnowledgePoint(point);
+    setReviewScope('today');
+    loadReviews('today', point);
+    setTab('review');
   }
 
   async function runSelfTest() {
@@ -1606,7 +1615,18 @@ function App() {
             <button className={reviewScope === 'today' ? 'active' : ''} onClick={() => { setReviewScope('today'); loadReviews('today'); }}>今日</button>
             <button className={reviewScope === 'overdue' ? 'active' : ''} onClick={() => { setReviewScope('overdue'); loadReviews('overdue'); }}>逾期</button>
           </div>
+          <section className="review-plan-filter">
+            <div className="cardhead"><h3>专项复习</h3>{reviewKnowledgePoint && <button className="ghost" onClick={() => { setReviewKnowledgePoint(''); loadReviews(reviewScope, ''); }}>清除知识点</button>}</div>
+            <p className="muted">按掌握度、连续错误和遗忘次数排序，选择一个考纲知识点只复习它的到期题目。</p>
+            <div className="chips-wrap">
+              <button className={`chip-button ${!reviewKnowledgePoint ? 'active' : ''}`} onClick={() => { setReviewKnowledgePoint(''); loadReviews(reviewScope, ''); }}>全部知识点</button>
+              {weeklyPriority.map((point) => <button key={`${point.subject}-${point.name}`} className={`chip-button ${reviewKnowledgePoint === point.name ? 'active' : ''}`} onClick={() => { setReviewKnowledgePoint(point.name); loadReviews(reviewScope, point.name); }}>
+                {point.name} · {point.error_count} 次错误
+              </button>)}
+            </div>
+          </section>
           <section>
+            <div className="cardhead"><h3>{reviewKnowledgePoint ? `复习：${reviewKnowledgePoint}` : (reviewScope === 'overdue' ? '逾期复习' : '今日复习')}</h3><span className="muted">{reviews.length} 题</span></div>
             {reviews.length ? (
               <div className="rows">
                 {reviews.map((question) => (
