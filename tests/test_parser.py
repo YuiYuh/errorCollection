@@ -47,6 +47,10 @@ def test_field_confidence_is_normalized_and_older_results_get_fallbacks():
     }
 
 
+def test_bare_zero_question_formula_is_treated_as_missing():
+    assert parse_result({"question_text": "求级数的和", "question_latex": "\\[0\\]"})["question_latex"] == ""
+
+
 def test_subject_alias_is_normalized():
     assert parse_result({"subject": "数据结构"})["subject"] == "ds"
 

@@ -138,7 +138,13 @@ function unescapeText(value: string): string {
 }
 
 export function questionPresentation(question: { subject?: string; question_text?: string; question_latex?: string }) {
-  const text = question.question_text?.trim(), latex = question.question_latex?.trim();
+  const text = question.question_text?.trim();
+  let latex = question.question_latex?.trim();
+  // Vision models sometimes use a bare `0` as the “no formula” value. When
+  // the readable stem already exists, showing it creates a misleading
+  // “补充公式 0” block. Keep genuine formulas and only hide this placeholder.
+  const unwrapped = latex?.replace(/^\\\(|\\\)$/g, '').replace(/^\\\[|\\\]$/g, '').replace(/^\$\$?|\$\$?$/g, '').trim();
+  if (text && text !== '0' && unwrapped === '0') latex = '';
   // question_text is the complete OCR question. question_latex only carries
   // mathematical expressions, so it must never replace the readable full stem.
   if (text) return { main: text, supplemental: latex && splitSegments(latex).some((s) => s.type === 'math' || s.type === 'display') ? latex : '' };

@@ -114,6 +114,14 @@ def _preserve_non_math_fields(result: dict[str, Any]) -> None:
         result["uncertain_parts"] = [*result.get("uncertain_parts", []), f"{label}包含代码/结构内容，已按原文保留"]
 
 
+def _strip_formula_wrapper(value: str) -> str:
+    text = value.strip()
+    for opening, closing in ((r"\(", r"\)"), (r"\[", r"\]"), ("$$", "$$"), ("$", "$")):
+        if text.startswith(opening) and text.endswith(closing):
+            return text[len(opening):-len(closing)].strip()
+    return text
+
+
 def parse_result(raw: str | dict[str, Any]) -> dict[str, Any]:
     try:
         value = _decode_json(raw) if isinstance(raw, str) else raw
@@ -141,6 +149,11 @@ def parse_result(raw: str | dict[str, Any]) -> dict[str, Any]:
     for key in FIELDS:
         if key not in ("subject", "difficulty", "is_typical", "needs_priority_review", "code_blocks", "error_types", "knowledge_points", "tags", "uncertain_parts", "confidence", "recognition_confidence", "correction_confidence", "field_confidence"):
             result[key] = _text_value(result.get(key), FIELDS[key])
+    # Some vision providers emit a bare zero when no standalone formula was
+    # found. It is not useful as a supplementary formula when the full stem
+    # is already present, and would otherwise render as “补充公式 0”.
+    if result.get("question_text", "").strip() and _strip_formula_wrapper(result.get("question_latex", "")) == "0":
+        result["question_latex"] = ""
     original_subject = str(result.get("subject", "unknown"))
     result["subject"] = normalize_subject(original_subject)
     if result["subject"] == "unknown" and original_subject.strip().lower() not in {"unknown", ""}:

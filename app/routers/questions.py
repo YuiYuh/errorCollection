@@ -143,6 +143,13 @@ def normalize(row):
         value["error_types"],
         " ".join(str(value.get(key, "")) for key in ("first_error_step", "error_analysis", "correct_approach", "question_text")),
     )]
+    formula = str(value.get("question_latex") or "").strip()
+    for opening, closing in (("\\(", "\\)"), ("\\[", "\\]"), ("$$", "$$"), ("$", "$")):
+        if formula.startswith(opening) and formula.endswith(closing):
+            formula = formula[len(opening):-len(closing)].strip()
+            break
+    if str(value.get("question_text") or "").strip() and formula == "0":
+        value["question_latex"] = ""
     normalize_knowledge(value)
     return value
 
