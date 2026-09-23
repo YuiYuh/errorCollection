@@ -1055,6 +1055,7 @@ nav .nav-upload.active { background: #fde047; color: #1e1b2e; }
 
 @media (max-width: 640px) {
   main { padding: 28px 14px calc(132px + env(safe-area-inset-bottom)); }
+  header .headside { width: 100%; justify-content: center; margin-top: 8px; }
   .app-shell::before { left: -82px; }
   .app-shell::after { right: -45px; }
   .tab-review .review-actions, .tab-detail .review-actions { gap: 6px; }
