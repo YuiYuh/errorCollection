@@ -1741,13 +1741,13 @@ function App() {
               <button key={key} className={statsTab === key ? 'active' : ''} onClick={() => setStatsTab(key)}>{label}</button>
             ))}
           </div>
-          <div className="metrics" style={{ marginBottom: 16 }}>
-            <div className="metric"><b>{overview?.total ?? 0}</b><span>错题总数</span></div>
-            <div className="metric"><b>{overview?.due ?? 0}</b><span>待复习</span></div>
-            <div className="metric"><b>{overview?.overdue ?? 0}</b><span>逾期</span></div>
-            <div className="metric"><b>{Math.round((overview?.average_mastery ?? 0) * 100)}%</b><span>平均掌握度</span></div>
-            <div className="metric"><b>{Math.round((accuracy?.recognition?.rate ?? 0) * 100)}%</b><span>AI 识别正确率</span></div>
-          </div>
+          <table className="stats-summary" aria-label="学习数据概览">
+            <tbody>
+              <tr><th scope="row">错题总数</th><td>{overview?.total ?? 0}</td><th scope="row">待复习</th><td>{overview?.due ?? 0}</td></tr>
+              <tr><th scope="row">逾期</th><td>{overview?.overdue ?? 0}</td><th scope="row">平均掌握度</th><td>{Math.round((overview?.average_mastery ?? 0) * 100)}%</td></tr>
+              <tr><th scope="row">AI 识别正确率</th><td colSpan={3}>{Math.round((accuracy?.recognition?.rate ?? 0) * 100)}%</td></tr>
+            </tbody>
+          </table>
 
           {statsTab === 'dist' && (
             <>
