@@ -392,6 +392,8 @@ function App() {
   const [questionLabel, setQuestionLabel] = useState('');
   const [multiQuestion, setMultiQuestion] = useState(false);
   const [questionLabels, setQuestionLabels] = useState('');
+  const [uploadHintEnabled, setUploadHintEnabled] = useState(false);
+  const [uploadHint, setUploadHint] = useState('');
   const [taskLabel, setTaskLabel] = useState('');
   const [recognitionHint, setRecognitionHint] = useState('');
   const [taskList, setTaskList] = useState<any[]>([]);
@@ -757,6 +759,7 @@ function App() {
       form.append('question_label', questionLabel.trim());
       form.append('multi_question', String(multiQuestion));
       if (multiQuestion) form.append('question_labels', questionLabels.trim());
+      if (uploadHintEnabled && uploadHint.trim()) form.append('recognition_hint', uploadHint.trim());
       form.append('image_edits', JSON.stringify(files.map((file) => imageEdits.get(file)?.edit || null)));
       const created = await uploadImages(form);
       // Fetch the complete task immediately so the saved originals appear
@@ -765,6 +768,7 @@ function App() {
       const saved = await api('/tasks/' + created.id).catch(() => ({ ...created, images: [] }));
       setTask(saved);
       setFiles([]); setTypes([]); setQuestionLabel(''); setMultiQuestion(false); setQuestionLabels('');
+      setUploadHintEnabled(false); setUploadHint('');
       setImageEdits(new Map());
       window.localStorage.setItem('wrongbook-last-task', String(created.id));
       if ((created.task_count || created.ids?.length || 1) > 1) {
@@ -1246,6 +1250,14 @@ function App() {
                 />
               </label>
             )}
+            <label className="inline-choice upload-mode-choice">
+              <input type="checkbox" checked={uploadHintEnabled} onChange={(event) => setUploadHintEnabled(event.target.checked)} />
+              <span>这题比较复杂，添加 AI 识别提示</span>
+            </label>
+            {uploadHintEnabled && <label>告诉 AI 题目的特殊情况或识别重点
+              <textarea maxLength={4000} value={uploadHint} onChange={(event) => setUploadHint(event.target.value)} rows={3} placeholder="例如：题干中的方框表示矩阵，不是空白；图片包含两道题，只识别第 3 题；分数线较浅，分子是 x+1。" />
+              <small className="muted">提示会随首次识别一起发送；多题模式下会用于本次选中的每道题。每次上传后自动清空。</small>
+            </label>}
             {files.length > 0 && (
               <div className="thumbs">
                 {files.map((file, index) => (

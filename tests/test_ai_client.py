@@ -85,6 +85,6 @@ def test_explicit_user_correction_takes_precedence(fake_openai):
     ))
     prompt = FakeOpenAI.requests[0]["messages"][0]["content"][0]["text"]
     assert corrected in prompt
-    assert "必须优先采用该内容" in prompt
+    assert "必须优先采用并写入" in prompt
     assert "不能因为图片模糊" in prompt
     assert "不要盲目接受提示" not in prompt

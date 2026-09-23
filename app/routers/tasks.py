@@ -181,6 +181,7 @@ async def upload_task(
     image_types: list[str] = Form(default=[]),
     question_label: str = Form(default=""),
     question_labels: str = Form(default=""),
+    recognition_hint: str = Form(default="", max_length=4000),
     multi_question: bool = Form(default=False),
     practice_question_id: int | None = Form(default=None),
     exam_id: int | None = Form(default=None),
@@ -229,8 +230,8 @@ async def upload_task(
             for label_index, label in enumerate(labels):
                 task_key = secrets.token_urlsafe(16)
                 cur = conn.execute(
-                    "INSERT INTO ai_tasks(status,question_label,multi_batch_id,crop_ready,created_at,updated_at,idempotency_key) VALUES('uploaded',?,?,0,?,?,?)",
-                    (label or None, multi_batch_id, now_iso(), now_iso(), task_key),
+                    "INSERT INTO ai_tasks(status,question_label,recognition_hint,multi_batch_id,crop_ready,created_at,updated_at,idempotency_key) VALUES('uploaded',?,?,?,0,?,?,?)",
+                    (label or None, recognition_hint.strip()[:4000] or None, multi_batch_id, now_iso(), now_iso(), task_key),
                 )
                 task_id = cur.lastrowid
                 task_ids.append(task_id)

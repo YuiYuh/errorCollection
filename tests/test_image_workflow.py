@@ -148,6 +148,23 @@ def test_retry_can_send_user_recognition_hint_to_ai(client, monkeypatch):
     assert hints == ['', '题干第二行的 2π 不要识别成 π']
 
 
+def test_upload_can_send_recognition_hint_on_first_attempt(client, monkeypatch):
+    hints = []
+
+    async def recognize(self, images, task_id=None, question_label='', recognition_hint=''):
+        hints.append(recognition_hint)
+        return {'question_text': '按上传提示识别出的题目'}
+
+    monkeypatch.setattr(OpenAICompatibleClient, 'recognize_and_analyze', recognize)
+    hint = '题目中的方框表示矩阵，不是空白；分数线分子为 x+1。'
+    response = upload(client, recognition_hint=hint)
+    assert response.status_code == 200
+    task_id = response.json()['id']
+    assert client.get(f'/api/tasks/{task_id}').json()['recognition_hint'] == hint
+    asyncio.run(process_task(task_id))
+    assert hints == [hint]
+
+
 def test_saved_latex_draft_resumes_and_does_not_confirm(client):
     task_id = upload(client).json()['id']
     version = ready(task_id)
