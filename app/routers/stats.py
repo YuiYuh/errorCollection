@@ -347,5 +347,8 @@ def distribution(days: int = 30):
         "repeat_syllabus_points": repeat_syllabus,
         "repeat_knowledge_points": repeat_knowledge,
         "knowledge_point_stats": knowledge_point_stats,
+        # ``today_priority`` is the homepage-facing name. Keep the older
+        # weekly key for clients that still use it.
+        "today_priority": weekly_priority,
         "weekly_priority": weekly_priority,
     }

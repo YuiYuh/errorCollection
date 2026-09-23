@@ -109,6 +109,7 @@ def test_distribution_returns_actionable_knowledge_point_statistics(client):
     assert point["recent_error_at"].startswith((datetime.now(timezone.utc) - timedelta(days=1)).date().isoformat())
     assert data["weekly_priority"][0]["name"] == "函数、极限、连续"
     assert len(data["weekly_priority"]) <= 5
+    assert data["today_priority"] == data["weekly_priority"]
 
 
 def test_distribution_groups_repeat_questions_by_knowledge_point(client):

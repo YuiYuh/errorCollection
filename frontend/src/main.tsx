@@ -960,7 +960,7 @@ function App() {
   const errorItems = withColors(distribution?.error_types);
   const knowledgeItems = withColors(distribution?.knowledge_points);
   const knowledgePointStats: any[] = distribution?.knowledge_point_stats || [];
-  const weeklyPriority: any[] = distribution?.weekly_priority || [];
+  const todayPriority: any[] = distribution?.today_priority || distribution?.weekly_priority || [];
   const syllabus: Syllabus = filters.syllabus || {};
   const syllabusEntries = syllabus[syllabusSubject] || [];
   const filterSyllabus = Object.entries(syllabus).filter(([subject]) => !filter.subject || subject === filter.subject
@@ -1117,11 +1117,11 @@ function App() {
             <button className="primary wide" onClick={() => go('review')}>开始复习</button>
           </section>
 
-          <section>
-            <h3>🎯 本周最该复习的知识点</h3>
+           <section>
+            <h3>🎯 今天最该复习的 5 个知识点</h3>
             <p className="muted">根据错误次数、最近错误、连续错误和掌握度自动排序，点击即可查看对应错题。</p>
-            {weeklyPriority.length ? <div className="rows">
-              {weeklyPriority.map((point) => <button className="rowitem" key={`${point.subject}-${point.name}`} onClick={() => showKnowledge(point.name, point.subject)}>
+            {todayPriority.length ? <div className="rows">
+              {todayPriority.map((point) => <button className="rowitem" key={`${point.subject}-${point.name}`} onClick={() => showKnowledge(point.name, point.subject)}>
                 <span className="ring" style={{ '--ring-color': subjectColor(point.subject) } as React.CSSProperties} />
                 <span className="rowmain"><span className="rowtitle">{point.name}</span><span className="rowmeta"><span className="chip">{subjectName(point.subject)}</span><span className="chip">错误 {point.error_count} 次</span><span className="chip">最近 {point.recent_error_at ? new Date(point.recent_error_at).toLocaleDateString() : '暂无'}</span><span className="chip">连续 {point.consecutive_error_count} 次</span><span className="chip">掌握度 {Math.round((point.mastery || 0) * 100)}%</span></span></span>
                 <span className="chev">›</span>
@@ -1620,7 +1620,7 @@ function App() {
             <p className="muted">按掌握度、连续错误和遗忘次数排序，选择一个考纲知识点只复习它的到期题目。</p>
             <div className="chips-wrap">
               <button className={`chip-button ${!reviewKnowledgePoint ? 'active' : ''}`} onClick={() => { setReviewKnowledgePoint(''); loadReviews(reviewScope, ''); }}>全部知识点</button>
-              {weeklyPriority.map((point) => <button key={`${point.subject}-${point.name}`} className={`chip-button ${reviewKnowledgePoint === point.name ? 'active' : ''}`} onClick={() => { setReviewKnowledgePoint(point.name); loadReviews(reviewScope, point.name); }}>
+              {todayPriority.map((point) => <button key={`${point.subject}-${point.name}`} className={`chip-button ${reviewKnowledgePoint === point.name ? 'active' : ''}`} onClick={() => { setReviewKnowledgePoint(point.name); loadReviews(reviewScope, point.name); }}>
                 {point.name} · {point.error_count} 次错误
               </button>)}
             </div>
@@ -1730,9 +1730,9 @@ function App() {
           {statsTab === 'tags' && (
             <>
               <section>
-                <h3>🎯 本周最该复习的 5 个知识点</h3>
+                <h3>🎯 今天最该复习的 5 个知识点</h3>
                 <p className="muted">按错误次数、最近错误时间和连续错误次数排序。</p>
-                {weeklyPriority.length ? <div className="rows">{weeklyPriority.map((item) => <button className="rowitem" key={`${item.subject}-${item.name}`} onClick={() => showKnowledge(item.name, item.subject)}>
+                {todayPriority.length ? <div className="rows">{todayPriority.map((item) => <button className="rowitem" key={`${item.subject}-${item.name}`} onClick={() => showKnowledge(item.name, item.subject)}>
                   <span className="rowmain"><span className="rowtitle">{item.name}</span><span className="rowmeta"><span className="chip">{subjectName(item.subject)}</span><span className="chip">错误 {item.error_count} 次</span><span className="chip">最近 {item.recent_error_at ? new Date(item.recent_error_at).toLocaleDateString() : '暂无'}</span><span className="chip">连续 {item.consecutive_error_count} 次</span></span></span><span className="chev">›</span>
                 </button>)}</div> : <Empty emoji="🎯" text="还没有可排序的知识点" />}
               </section>
