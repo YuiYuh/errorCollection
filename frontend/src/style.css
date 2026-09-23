@@ -821,21 +821,7 @@ main {
   transform: rotate(-14deg);
   opacity: .84;
 }
-.app-shell::after {
-  content: "";
-  position: absolute;
-  z-index: -1;
-  top: 18px;
-  right: -28px;
-  width: 96px;
-  height: 96px;
-  border-radius: 44% 56% 59% 41% / 56% 39% 61% 44%;
-  background: #fbcfe8;
-  transform: rotate(21deg);
-  opacity: .75;
-}
 :root[data-theme="dark"] .app-shell::before { opacity: .34; }
-:root[data-theme="dark"] .app-shell::after { opacity: .28; }
 h1, h2, h3, .metric b, .rowtitle { color: var(--text); }
 h1 { font-family: ui-rounded, "Arial Rounded MT Bold", var(--font); font-weight: 900; letter-spacing: -.055em; }
 header { padding-bottom: 22px; }
@@ -1068,7 +1054,6 @@ nav .nav-upload.active { background: #fde047; color: #1e1b2e; }
   header .headside { grid-column: 2; grid-row: 1; width: auto; justify-content: flex-end; margin: 0; gap: 6px; }
   header .aipill { max-width: 38vw; }
   .app-shell::before { left: -82px; }
-  .app-shell::after { right: -45px; }
   .tab-review .review-actions, .tab-detail .review-actions { gap: 6px; }
   .review-score { font-size: .74rem; padding-left: 2px; padding-right: 2px; }
   nav { width: calc(100% - 20px); }
