@@ -1012,7 +1012,9 @@ function App() {
   const errorItems = withColors(distribution?.error_types);
   const knowledgeItems = withColors(distribution?.knowledge_points);
   const knowledgePointStats: any[] = distribution?.knowledge_point_stats || [];
-  const todayPriority: any[] = distribution?.today_priority || distribution?.weekly_priority || [];
+  const scoredTodayPriority: any[] = distribution?.today_priority?.length
+    ? distribution.today_priority
+    : distribution?.weekly_priority?.length ? distribution.weekly_priority : [];
   const syllabus: Syllabus = filters.syllabus || {};
   const syllabusEntries = syllabus[syllabusSubject] || [];
   const filterSyllabus = Object.entries(syllabus).filter(([subject]) => !filter.subject || subject === filter.subject
@@ -1083,6 +1085,18 @@ function App() {
       || Number(left.mastery || 0) - Number(right.mastery || 0)
       || String(left.name).localeCompare(String(right.name));
   });
+  const hasScoredTodayPriority = scoredTodayPriority.length > 0 || knowledgePointStats.length > 0;
+  const todayPriority: any[] = scoredTodayPriority.length
+    ? scoredTodayPriority
+    : knowledgePointStats.length
+      ? [...knowledgePointStats].sort((left, right) => Number(right.priority_score || 0) - Number(left.priority_score || 0)
+        || Number(right.error_count || 0) - Number(left.error_count || 0)).slice(0, 5)
+      : [...repeatSyllabusPoints]
+        .filter((point) => Number(point.question_count ?? point.count ?? 0) > 0)
+        .sort((left, right) => Number(right.repeat_count || 0) - Number(left.repeat_count || 0)
+          || Number(left.mastery || 0) - Number(right.mastery || 0)
+          || Number(right.question_count ?? right.count ?? 0) - Number(left.question_count ?? left.count ?? 0))
+        .slice(0, 5);
   const visibleRepeatKnowledge = showAllRepeatKnowledge ? repeatSyllabusPoints : repeatSyllabusPoints.slice(0, 3);
   const subjectOptions: { value: string; label: string }[] = filters.subject_options?.length
     ? filters.subject_options
@@ -1199,10 +1213,10 @@ function App() {
             {todayPriority.length ? <div className="rows">
               {todayPriority.map((point) => <button className="rowitem" key={`${point.subject}-${point.name}`} onClick={() => showKnowledge(point.name, point.subject)}>
                 <span className="ring" style={{ '--ring-color': subjectColor(point.subject) } as React.CSSProperties} />
-                <span className="rowmain"><span className="rowtitle">{point.name}</span><span className="rowmeta"><span className="chip">{subjectName(point.subject)}</span><span className="chip">错误 {point.error_count} 次</span><span className="chip">最近 {point.recent_error_at ? new Date(point.recent_error_at).toLocaleDateString() : '暂无'}</span><span className="chip">连续 {point.consecutive_error_count} 次</span><span className="chip">掌握度 {Math.round((point.mastery || 0) * 100)}%</span></span></span>
+                <span className="rowmain"><span className="rowtitle">{point.name}</span><span className="rowmeta"><span className="chip">{subjectName(point.subject)}</span>{hasScoredTodayPriority ? <><span className="chip">错误 {point.error_count} 次</span><span className="chip">最近 {point.recent_error_at ? new Date(point.recent_error_at).toLocaleDateString() : '暂无'}</span><span className="chip">连续 {point.consecutive_error_count} 次</span><span className="chip">掌握度 {Math.round((point.mastery || 0) * 100)}%</span></> : <><span className="chip">错题 {point.question_count ?? point.count} 道</span>{point.repeat_count > 0 && <span className="chip">重复错误 {point.repeat_count} 次</span>}<span className="chip">掌握度 {Math.round((point.mastery || 0) * 100)}%</span></>}</span></span>
                 <span className="chev">›</span>
               </button>)}
-            </div> : <Empty emoji="🎯" text="积累错题后会自动生成复习优先级" />}
+            </div> : <Empty emoji="🎯" text="还没有可排序的知识点错题，收录错题后会自动生成复习优先级" />}
           </section>
 
           <section>
