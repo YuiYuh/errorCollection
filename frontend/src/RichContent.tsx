@@ -49,7 +49,7 @@ export function ResultField({ label, value, onChange }: { label: string; value?:
 export function AnalysisContent({ result }: { result: Parameters<typeof analysisPresentation>[0] }) {
   const { sections, notices, uncertainty, notice } = analysisPresentation(result);
   return <div className="analysis-content">
-    {result.needs_review && <p className="review-flag">低置信度结果，已自动加入错题本，请稍后快速核对。</p>}
+    {Boolean(result.needs_review) && <p className="review-flag">低置信度结果，已自动加入错题本，请稍后快速核对。</p>}
     {notice && <p className="analysis-notice">{notice}</p>}
     {sections.map(item => item.secondary
       ? <details key={item.field}><summary>{item.label}</summary><RichText text={item.value} /></details>

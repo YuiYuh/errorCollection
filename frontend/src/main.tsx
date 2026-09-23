@@ -1609,7 +1609,7 @@ function App() {
               <span className="chip" style={{ marginLeft: 8 }}>{difficultyName(selected.difficulty)}</span>
               {selected.question_label && <span className="chip" style={{ marginLeft: 8 }}>{selected.question_label}</span>}
               <span className={`chip ${selected.needs_review ? 'low-confidence-chip' : ''}`} style={{ marginLeft: 8 }}>识别置信度 {Math.round((selected.confidence || 0) * 100)}%{selected.needs_review ? ' · 待核对' : ''}</span>
-              {selected.needs_review && <button className="primary wide" onClick={confirmQuestionConfidence}>我已核对，确认识别结果</button>}
+              {Boolean(selected.needs_review) && <button className="primary wide" onClick={confirmQuestionConfidence}>我已核对，确认识别结果</button>}
               <h2 style={{ marginTop: 10 }}>{selected.chapter || '未分类'}</h2>
               <QuestionContent question={selected} />
               <AnalysisContent result={selected} />
