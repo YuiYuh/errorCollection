@@ -688,3 +688,67 @@ input:focus, textarea:focus, select:focus { background: var(--surface); border-c
   nav { padding-top: 8px; }
   nav button.active { background: transparent; }
 }
+
+/* ============ 彩色杂志卡片主题 ============ */
+.app-shell { position: relative; }
+.app-shell > header h1 { font-size: clamp(2rem, 8vw, 3.15rem); line-height: .98; }
+.app-shell > header .sub { font-size: .92rem; letter-spacing: .01em; }
+.tab-home > section { border: 0; box-shadow: none; overflow: hidden; }
+.tab-home > section:nth-of-type(1) { background: #171717; color: #fff; padding: 28px; }
+.tab-home > section:nth-of-type(1) .muted { color: #b8b8b8; }
+.tab-home > section:nth-of-type(1) button.primary { background: #fff; color: #171717; box-shadow: none; }
+.tab-home > section:nth-of-type(2) { background: #ffe78a; }
+.tab-home > section:nth-of-type(3) { background: #e7d9ff; }
+.tab-home > section:nth-of-type(4) { background: #c9ddff; }
+.tab-home > section:nth-of-type(2) .rowitem,
+.tab-home > section:nth-of-type(3) .repeat-point,
+.tab-home > section:nth-of-type(4) .metric { background: rgba(255,255,255,.42); border-color: rgba(20,20,20,.08); }
+.tab-home > section:nth-of-type(2) .rowitem:hover,
+.tab-home > section:nth-of-type(3) .repeat-point > summary:hover,
+.tab-home > section:nth-of-type(3) .repeat-point[open] > summary { background: rgba(255,255,255,.66); }
+.tab-home > section:nth-of-type(2) .chip,
+.tab-home > section:nth-of-type(3) .chip,
+.tab-home > section:nth-of-type(4) .chip { background: rgba(255,255,255,.56); color: #343238; }
+.tab-home > section h3 { font-size: 1.12rem; letter-spacing: -.03em; }
+.tab-home > section:nth-of-type(1) h3 { font-size: 1.3rem; }
+.tab-home .week { padding: 4px 0 24px; }
+.tab-home .week div { border-radius: 16px; }
+.tab-home .week div.today { background: #171717; color: #fff; }
+.tab-home .week div.today b { color: #fff; }
+.tab-home .week div .dot { background: currentColor; }
+.tab-entry, .task-entry { border-radius: 999px !important; }
+.tab-upload > section:first-of-type { background: #ffd1e6; border: 0; box-shadow: none; }
+.tab-upload > section:nth-of-type(2) { background: #d8e9ff; border: 0; box-shadow: none; }
+.tab-upload .file-picker { background: rgba(255,255,255,.54); border-color: rgba(40,20,40,.10); }
+.tab-upload .primary { background: #171717; color: #fff; box-shadow: none; }
+.tab-detail > section { background: #fff8e9; border: 0; box-shadow: none; }
+.tab-review > section { background: #e4f4dd; border: 0; box-shadow: none; }
+.tab-stats > section { background: #eee4ff; border: 0; box-shadow: none; }
+.tab-status > section, .tab-tasks > section { background: #e3efff; border: 0; box-shadow: none; }
+:root[data-theme="dark"] .tab-home > section:nth-of-type(1) { background: #171717; }
+:root[data-theme="dark"] .tab-home > section:nth-of-type(2) { background: #514725; }
+:root[data-theme="dark"] .tab-home > section:nth-of-type(3) { background: #443b59; }
+:root[data-theme="dark"] .tab-home > section:nth-of-type(4) { background: #314766; }
+:root[data-theme="dark"] .tab-upload > section:first-of-type { background: #553343; }
+:root[data-theme="dark"] .tab-upload > section:nth-of-type(2) { background: #2c405a; }
+:root[data-theme="dark"] .tab-detail > section { background: #403a2d; }
+:root[data-theme="dark"] .tab-review > section { background: #2d432a; }
+:root[data-theme="dark"] .tab-stats > section { background: #3e3554; }
+:root[data-theme="dark"] .tab-status > section, :root[data-theme="dark"] .tab-tasks > section { background: #2d3f56; }
+nav {
+  left: 50%; right: auto; width: min(100%, 560px); transform: translateX(-50%);
+  grid-template-columns: repeat(6, 1fr); border: 0; border-radius: 26px 26px 0 0;
+  background: #111; color: #fff; padding: 10px 10px calc(10px + env(safe-area-inset-bottom));
+  box-shadow: 0 -8px 28px rgba(0,0,0,.16);
+}
+nav button { color: #929296; border-radius: 16px; }
+nav button.active { color: #fff; background: transparent; }
+nav button.active svg { stroke-width: 2.6; }
+nav .nav-upload { align-self: center; justify-self: center; width: 52px; height: 52px; padding: 0; margin: -22px 0 0; display: grid; place-items: center; border-radius: 50%; background: #fff; color: #111; box-shadow: 0 5px 15px rgba(0,0,0,.3); }
+nav .nav-upload span { font-size: 2rem; font-weight: 300; line-height: 1; }
+nav .nav-upload.active { background: #fff; color: #111; }
+@media (max-width: 640px) {
+  main { padding-bottom: calc(108px + env(safe-area-inset-bottom)); }
+  nav { width: 100%; border-radius: 24px 24px 0 0; }
+  nav .nav-upload { width: 54px; height: 54px; }
+}

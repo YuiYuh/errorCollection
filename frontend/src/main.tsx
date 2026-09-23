@@ -96,8 +96,8 @@ const initialImageEdit = (image: ImageItem): EditedImage | undefined => {
 };
 const RATINGS: [string, string][] = [['correct', '正确'], ['partial', '部分正确'], ['wrong', '错误']];
 const NAV_ITEMS: [string, string][] = [
-  ['home', '今天'], ['upload', '上传'], ['list', '错题本'],
-  ['review', '复习'], ['stats', '洞察'], ['status', '状态'],
+  ['home', '今天'], ['review', '复习'], ['list', '错题本'],
+  ['stats', '洞察'], ['status', '我的'],
 ];
 const REVIEW_BUTTONS: [string, string][] = [['forgot', '忘记'], ['hard', '困难'], ['remembered', '记得'], ['mastered', '熟练']];
 const ERROR_TYPE_OPTIONS = ['概念理解', '方法选择', '计算与符号', '条件与边界', '审题与信息提取', '推理与论证', '记忆与规范', '代码与实现'];
@@ -1062,7 +1062,7 @@ function App() {
     : Object.entries(SUBJECT_LABELS).filter(([key]) => key !== 'unknown').map(([value, label]) => ({ value, label }));
 
   return (
-    <main>
+    <main className={`app-shell tab-${tab}`}>
       <header>
         <div className="headmain">
           <h1>{tab === 'task'
@@ -1931,15 +1931,21 @@ function App() {
         </>
       )}
 
-      {['home', 'list'].includes(tab) && (
-        <button className="fab" onClick={() => go('upload')} title="上传错题">+</button>
-      )}
-
       <nav>
-        {NAV_ITEMS.map(([key, label]) => (
+        {NAV_ITEMS.slice(0, 2).map(([key, label]) => (
           <button
             key={key}
             className={tab === key || (key === 'upload' && (tab === 'task' || tab === 'practice')) || (key === 'list' && (tab === 'detail' || tab === 'trash')) ? 'active' : ''}
+            onClick={() => go(key)}
+          ><NavIcon name={key} /><span>{label}</span></button>
+        ))}
+        <button className={`nav-upload ${['upload', 'task', 'practice'].includes(tab) ? 'active' : ''}`} onClick={() => go('upload')} aria-label="上传错题">
+          <span>＋</span>
+        </button>
+        {NAV_ITEMS.slice(2).map(([key, label]) => (
+          <button
+            key={key}
+            className={tab === key || (key === 'list' && (tab === 'detail' || tab === 'trash')) ? 'active' : ''}
             onClick={() => go(key)}
           ><NavIcon name={key} /><span>{label}</span></button>
         ))}
