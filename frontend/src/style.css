@@ -1083,3 +1083,13 @@ nav .nav-upload.active { background: #fde047; color: #1e1b2e; }
   .tab-stats .metric, .donut circle, .trend .tbar, .week div.today b,
   .tab-home > section:nth-of-type(1)::after { animation: none !important; }
 }
+
+/* 窄屏设备 / 手机横屏：取消桌面内容列的最大宽度，避免右侧空出整条边 */
+@media (max-width: 1024px) {
+  main.app-shell {
+    width: 100%;
+    max-width: none;
+    margin-left: 0;
+    margin-right: 0;
+  }
+}
