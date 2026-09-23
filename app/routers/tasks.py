@@ -15,7 +15,7 @@ from ..config import settings
 from ..db import db, json_load, now_iso
 from ..services.worker import process_task
 from ..syllabus import normalize_knowledge
-from ..services.duplicates import candidates
+from ..services.duplicates import candidates, knowledge_point_candidates
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 ALLOWED = {"image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"}
@@ -334,7 +334,11 @@ def task_payload(task_id: int):
             raise HTTPException(404, "任务不存在")
         result = conn.execute("SELECT result_json,meta_json FROM ai_results WHERE task_id=?", (task_id,)).fetchone()
         images = conn.execute("SELECT id,image_type,mime_type,file_size,(edit_json IS NOT NULL) has_edit FROM question_images WHERE task_id=?", (task_id,)).fetchall()
-        duplicates = candidates(conn, task_id, json_load(result[0], {}) if result else {})
+        parsed_result = json_load(result[0], {}) if result else {}
+        duplicates = candidates(conn, task_id, parsed_result)
+        related_knowledge_points = knowledge_point_candidates(
+            conn, task_id, parsed_result, excluded_ids=[item["id"] for item in duplicates]
+        )
         attempt = conn.execute('SELECT id,question_id FROM practice_attempts WHERE task_id=?', (task_id,)).fetchone()
         draft = conn.execute('SELECT result_json FROM task_drafts WHERE task_id=? AND task_version=?', (task_id, task['updated_at'])).fetchone()
         batch = _batch_summary(conn, task["multi_batch_id"])
@@ -347,6 +351,7 @@ def task_payload(task_id: int):
         "ai_meta": json_load(result[1], {}) if result else None,
         "images": [dict(i) for i in images],
         "duplicates": duplicates,
+        "related_knowledge_points": related_knowledge_points,
         "practice_attempt": dict(attempt) if attempt else None,
         "draft": json_load(draft[0], {}) if draft else None,
         "batch": batch,

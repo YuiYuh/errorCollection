@@ -20,6 +20,7 @@ type Task = {
   multi_batch_id?: string | null; crop_ready?: number;
   batch?: { id: string; total: number; success_count: number; failed_count: number; active_count: number; failed_ids: number[]; current_index?: number; progress_label: string } | null;
   duplicates?: any[];
+  related_knowledge_points?: any[];
   draft?: any;
 };
 
@@ -1354,6 +1355,7 @@ function App() {
           </div>
 
           {!!task.duplicates?.length && <div className="feedback"><p><b>可能是已存在的错题</b></p><p className="muted">请核对题号与条件，追加会保留本次原图和分析，不计入重做正确率。</p>{task.duplicates.map((item: any) => <div className="duplicateitem" key={item.id}><b>{compactTitle(item)}</b><p className="muted">{item.reason}</p><RichText text={item.question_text} /><button onClick={async () => { try { await jsonPost(`/learning/duplicates/${task.id}/attach`, { question_id: item.id }); setNotice('已追加到原错题'); loadTasks(); openQuestion(item.id); } catch (err: any) { setError(err.message); } }}>追加到此题</button></div>)}</div>}
+          {!!task.related_knowledge_points?.length && <div className="feedback"><p><b>可能是同一知识点</b></p><p className="muted">这些题不是同一道题，系统只提示考纲知识点相同，方便归纳复习，不会自动合并。</p>{task.related_knowledge_points.map((item: any) => <div className="duplicateitem" key={`point-${item.id}`}><b>{item.knowledge_point}</b><p className="muted">{compactTitle(item)} · {item.reason}</p><RichText text={item.question_text} /><button onClick={() => openQuestion(item.id)}>查看已有错题</button></div>)}</div>}
 
           <details>
             <summary>编辑识别结果</summary>

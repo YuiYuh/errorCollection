@@ -165,3 +165,19 @@ def test_text_duplicate_suggestion_is_subject_scoped(client):
     with db() as conn:
         conn.execute('UPDATE ai_results SET result_json=? WHERE task_id=?', (json.dumps({'question_text': q['question_text'], 'subject': 'ds'}), task['id']))
     assert client.get(f"/api/tasks/{task['id']}").json()['duplicates'] == []
+
+
+def test_related_knowledge_point_suggestion_is_separate_from_duplicates(client):
+    q = question(client, knowledge_points=['函数、极限、连续'])
+    task = upload(client)
+    ready(task['id'])
+    with db() as conn:
+        conn.execute(
+            'UPDATE ai_results SET result_json=? WHERE task_id=?',
+            (json.dumps({'subject': 'math_calculus', 'knowledge_points': ['函数、极限、连续'], 'question_text': '另一道不同条件的极限题'}), task['id']),
+        )
+    payload = client.get(f"/api/tasks/{task['id']}").json()
+    assert payload['duplicates'] == []
+    assert payload['related_knowledge_points'][0]['id'] == q['id']
+    assert payload['related_knowledge_points'][0]['knowledge_point'] == '函数、极限、连续'
+    assert '可能是同一知识点' in payload['related_knowledge_points'][0]['reason']

@@ -6,6 +6,8 @@ from pathlib import Path
 from difflib import SequenceMatcher
 
 from ..db import json_load
+from ..subjects import normalize_subject
+from ..syllabus import UNCLASSIFIED, primary_knowledge_point
 
 
 def fingerprint(text):
@@ -52,3 +54,53 @@ def candidates(conn, task_id, result=None):
         if reason:
             found.append({**dict(row), 'score': round(score, 3), 'reason': reason})
     return sorted(found, key=lambda item: (-item['score'], -item['id']))[:5]
+
+
+def knowledge_point_candidates(conn, task_id, result=None, excluded_ids=None):
+    """Find existing questions with the same canonical syllabus point.
+
+    These are deliberately separate from exact duplicate candidates: a shared
+    knowledge point is useful for grouping, but it is not safe to merge the
+    questions automatically because their numbers and conditions may differ.
+    """
+    if conn.execute("SELECT 1 FROM practice_attempts WHERE task_id=?", (task_id,)).fetchone():
+        return []
+    value = result or {}
+    subject = normalize_subject(value.get("subject"))
+    if subject == "unknown":
+        return []
+    incoming_point = primary_knowledge_point(
+        subject,
+        value.get("knowledge_points"),
+        " ".join(str(value.get(key) or "") for key in ("chapter", "question_text", "question_latex", "correct_approach")),
+    )
+    if incoming_point == UNCLASSIFIED:
+        return []
+    excluded = {int(item) for item in (excluded_ids or ())}
+    found = []
+    for row in conn.execute(
+        "SELECT id,subject,chapter,question_label,created_at,question_text,question_latex,knowledge_points "
+        "FROM questions WHERE deleted_at IS NULL AND subject=? ORDER BY id DESC",
+        (subject,),
+    ):
+        if int(row["id"]) in excluded:
+            continue
+        points = json_load(row["knowledge_points"], [])
+        point = primary_knowledge_point(
+            row["subject"],
+            points,
+            " ".join(str(row[key] or "") for key in ("chapter", "question_text", "question_latex")),
+        )
+        if point != incoming_point:
+            continue
+        source = fingerprint(value.get("question_text"))
+        target = fingerprint(row["question_text"])
+        text_similarity = SequenceMatcher(None, source, target, autojunk=False).ratio() if min(len(source), len(target)) >= 12 else 0.0
+        found.append({
+            **dict(row),
+            "score": round(0.65 + min(0.2, text_similarity * 0.2), 3),
+            "match_type": "knowledge_point",
+            "knowledge_point": incoming_point,
+            "reason": f"可能是同一知识点：{incoming_point}，可归纳后再保留",
+        })
+    return sorted(found, key=lambda item: (-item["score"], -item["id"]))[:5]
