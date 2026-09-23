@@ -53,3 +53,43 @@ def test_reanalysis_isolated_and_applies_selected_fields(client, monkeypatch):
     assert applied.status_code == 200
     assert applied.json()["question"]["question_text"] == "新题目"
     assert applied.json()["question"]["question_latex"] == "x^2"
+
+
+def test_field_reanalysis_and_version_restore(client, monkeypatch):
+    calls = []
+
+    async def recognize(self, images, task_id=None, question_label="", recognition_hint="", recognition_fields=None):
+        calls.append((len(images), recognition_fields or []))
+        return {
+            "question_text": "局部修正后的题目",
+            "question_latex": "x^4",
+            "reference_solution_latex": "新答案",
+            "knowledge_points": ["极限"],
+        }
+
+    monkeypatch.setattr(OpenAICompatibleClient, "recognize_and_analyze", recognize)
+    uploaded = client.post("/api/tasks/upload", data={"image_types": "question"}, files=[("files", ("q.png", photo(), "image/png"))])
+    parent_task = uploaded.json()["id"]
+    asyncio.run(process_task(parent_task))
+    question_id = client.get("/api/tasks?include_practice=true").json()["items"][0]["question_id"]
+    question = client.get(f"/api/questions/{question_id}").json()
+    image_id = question["images"][0]["id"]
+
+    created = client.post(f"/api/questions/{question_id}/reanalyze", json={
+        "fields": ["question_text"],
+        "image_edits": [{"image_id": image_id, "x": 0.1, "y": 0.1, "width": 0.8, "height": 0.8}],
+    })
+    assert created.status_code == 200 and created.json()["fields"] == ["question_text"]
+    task_id = created.json()["task_id"]
+    asyncio.run(process_task(task_id))
+    assert calls[-1] == (1, ["question_text"])
+    applied = client.post(f"/api/questions/{question_id}/reanalyze/{task_id}/apply", json={"fields": ["question_text"]})
+    assert applied.status_code == 200
+    version_id = applied.json()["version_id"]
+    assert version_id
+
+    assert client.patch(f"/api/questions/{question_id}", json={"question_text": "手动临时修改"}).status_code == 200
+    restored = client.post(f"/api/questions/{question_id}/versions/{version_id}/restore", json={})
+    assert restored.status_code == 200
+    assert restored.json()["question"]["question_text"] == "局部修正后的题目"
+    assert len(restored.json()["question"]["versions"]) >= 2

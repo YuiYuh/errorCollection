@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS tags (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT
 CREATE TABLE IF NOT EXISTS question_tags (question_id INTEGER NOT NULL, tag_id INTEGER NOT NULL, PRIMARY KEY(question_id,tag_id), FOREIGN KEY(question_id) REFERENCES questions(id), FOREIGN KEY(tag_id) REFERENCES tags(id));
 CREATE TABLE IF NOT EXISTS review_cards (question_id INTEGER PRIMARY KEY, due_at TEXT NOT NULL, interval_days REAL NOT NULL DEFAULT 1, ease REAL NOT NULL DEFAULT 2.5, reps INTEGER NOT NULL DEFAULT 0, lapses INTEGER NOT NULL DEFAULT 0, FOREIGN KEY(question_id) REFERENCES questions(id));
 CREATE TABLE IF NOT EXISTS review_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, question_id INTEGER NOT NULL, reviewed_at TEXT NOT NULL, rating TEXT NOT NULL, before_mastery REAL, after_mastery REAL, next_review_at TEXT, overdue INTEGER NOT NULL DEFAULT 0, note TEXT, FOREIGN KEY(question_id) REFERENCES questions(id));
-CREATE TABLE IF NOT EXISTS ai_tasks (id INTEGER PRIMARY KEY AUTOINCREMENT, status TEXT NOT NULL, error TEXT, error_category TEXT, question_label TEXT, recognition_hint TEXT, multi_batch_id TEXT, crop_ready INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, idempotency_key TEXT UNIQUE, reanalysis_question_id INTEGER, reanalysis_parent_task_id INTEGER);
+ CREATE TABLE IF NOT EXISTS ai_tasks (id INTEGER PRIMARY KEY AUTOINCREMENT, status TEXT NOT NULL, error TEXT, error_category TEXT, question_label TEXT, recognition_hint TEXT, recognition_fields TEXT NOT NULL DEFAULT '[]', multi_batch_id TEXT, crop_ready INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, idempotency_key TEXT UNIQUE, reanalysis_question_id INTEGER, reanalysis_parent_task_id INTEGER);
 CREATE TABLE IF NOT EXISTS ai_task_images (task_id INTEGER NOT NULL, image_id INTEGER NOT NULL, PRIMARY KEY(task_id,image_id), FOREIGN KEY(task_id) REFERENCES ai_tasks(id), FOREIGN KEY(image_id) REFERENCES question_images(id));
 CREATE TABLE IF NOT EXISTS ai_results (id INTEGER PRIMARY KEY AUTOINCREMENT, task_id INTEGER NOT NULL UNIQUE, result_json TEXT NOT NULL, raw_response TEXT, meta_json TEXT, created_at TEXT NOT NULL, FOREIGN KEY(task_id) REFERENCES ai_tasks(id));
 CREATE TABLE IF NOT EXISTS ai_feedback (
@@ -63,10 +63,19 @@ CREATE TABLE IF NOT EXISTS practice_attempts (
  outcome TEXT, same_error INTEGER, review_rating TEXT, note TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_practice_question ON practice_attempts(question_id,created_at);
-CREATE TABLE IF NOT EXISTS task_drafts (
+ CREATE TABLE IF NOT EXISTS task_drafts (
  task_id INTEGER PRIMARY KEY REFERENCES ai_tasks(id), result_json TEXT NOT NULL,
  task_version TEXT NOT NULL, updated_at TEXT NOT NULL
-);
+ );
+ CREATE TABLE IF NOT EXISTS question_versions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  question_id INTEGER NOT NULL REFERENCES questions(id),
+  source_task_id INTEGER,
+  snapshot_json TEXT NOT NULL,
+  label TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+ );
+ CREATE INDEX IF NOT EXISTS idx_question_versions_question ON question_versions(question_id, id DESC);
 """
 
 MIGRATIONS = (
@@ -77,6 +86,8 @@ MIGRATIONS = (
     "ALTER TABLE question_images ADD COLUMN question_label TEXT",
     "ALTER TABLE ai_tasks ADD COLUMN question_label TEXT",
     "ALTER TABLE ai_tasks ADD COLUMN recognition_hint TEXT",
+    "ALTER TABLE ai_tasks ADD COLUMN recognition_fields TEXT NOT NULL DEFAULT '[]'",
+    "ALTER TABLE ai_tasks ADD COLUMN recognition_context TEXT",
     "ALTER TABLE ai_tasks ADD COLUMN multi_batch_id TEXT",
     "ALTER TABLE ai_tasks ADD COLUMN crop_ready INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE ai_tasks ADD COLUMN reanalysis_question_id INTEGER",

@@ -343,10 +343,15 @@ def task_payload(task_id: int):
         draft = conn.execute('SELECT result_json FROM task_drafts WHERE task_id=? AND task_version=?', (task_id, task['updated_at'])).fetchone()
         batch = _batch_summary(conn, task["multi_batch_id"])
     parsed = json_load(result[0]) if result else None
-    if isinstance(parsed, dict):
+    # Scoped re-recognition deliberately stores a sparse result. Running the
+    # full syllabus normalizer here would invent defaults for fields that were
+    # never requested and make the comparison misleading.
+    if isinstance(parsed, dict) and not json_load(task["recognition_fields"], []):
         normalize_knowledge(parsed)
+    task_value = dict(task)
+    task_value["recognition_fields"] = json_load(task_value.get("recognition_fields"), [])
     return {
-        **dict(task),
+        **task_value,
         "result": parsed,
         "ai_meta": json_load(result[1], {}) if result else None,
         "images": [dict(i) for i in images],
@@ -374,9 +379,11 @@ async def run_task(task_id: int):
 @router.post("/{task_id}/retry")
 async def retry_task(task_id: int, payload: RetryIn | None = None):
     with db() as conn:
-        current = conn.execute("SELECT status,question_label,multi_batch_id FROM ai_tasks WHERE id=?", (task_id,)).fetchone()
+        current = conn.execute("SELECT status,question_label,multi_batch_id,reanalysis_question_id FROM ai_tasks WHERE id=?", (task_id,)).fetchone()
         if not current:
             raise HTTPException(404, "任务不存在")
+        if current["reanalysis_question_id"] and current["status"] in {"reanalysis_completed", "reanalysis_applied"}:
+            raise HTTPException(409, "重识别结果已生成，请在错题详情重新创建任务；原结果不会被覆盖")
         if conn.execute("SELECT 1 FROM practice_attempts WHERE task_id=? AND (confirmed_at IS NOT NULL OR source='duplicate')", (task_id,)).fetchone():
             raise HTTPException(409, '已确认的作答不能覆盖，请开始一次新的重做')
         if payload is not None and payload.question_label is not None:

@@ -13,7 +13,7 @@ from ...error_types import ERROR_TYPE_OPTIONS
 from ...syllabus import syllabus_prompt
 from ..images import prepare_for_ai, edit_image
 from .network import resolve_ai_proxy
-from .parser import parse_result
+from .parser import parse_result, _decode_json
 
 log = logging.getLogger(__name__)
 SUBJECT_RULE = """科目必须细分，禁止只写“数学一”或“408”：
@@ -161,8 +161,63 @@ class OpenAICompatibleClient:
         task_id: int | None = None,
         question_label: str = "",
         recognition_hint: str = "",
+        recognition_fields: list[str] | None = None,
+        recognition_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        scoped = [field for field in (recognition_fields or []) if field]
         instruction = SYSTEM_PROMPT + "\n请同时完成识别与错误分析，返回约定字段。"
+        if scoped:
+            labels = {
+                "question_text": "完整题目文字（包括条件、选项和小问）",
+                "question_latex": "题目中的数学公式",
+                "user_solution_latex": "用户解题过程",
+                "reference_solution_latex": "参考答案",
+                "correct_approach": "正确思路",
+                "knowledge_points": "考纲知识点",
+                "first_error_step": "第一处错误步骤",
+                "error_analysis": "错误原因分析",
+                "error_types": "错误大类",
+                "tags": "辅助标签",
+                "code_blocks": "代码、表格或结构化内容",
+            }
+            names = [labels[field] for field in scoped if field in labels]
+            # A scoped request must not receive the full analysis prompt's
+            # default fields. This keeps a local correction from replacing
+            # unrelated content with empty parser defaults.
+            instruction = (
+                "你是错题识别校对助手。只核对图片中与本次字段有关的内容，"
+                "不要解答未要求的部分，不要臆测图片外的内容。只输出合法 JSON，"
+                "JSON 键只能是：" + ", ".join(scoped) + "。"
+                "字符串字段保持原文和换行；数组字段返回字符串数组。"
+                "question_text 必须是完整题干而不是摘要；knowledge_points 只能从考纲目录选择。"
+                "如果局部图片不足以判断某字段，请返回空字符串或空数组。"
+                "本次需要核对：" + "、".join(names) + "。\n"
+            )
+            if "knowledge_points" in scoped:
+                instruction += "考纲目录（只能从中选择一个最核心知识点）：\n" + syllabus_prompt() + "\n"
+            if recognition_context:
+                context_keys = list(scoped)
+                if "knowledge_points" in scoped and "subject" in recognition_context:
+                    context_keys.append("subject")
+                frozen = {key: recognition_context.get(key) for key in context_keys if key in recognition_context}
+                instruction += "原错题中这些字段的当前内容如下，仅用于对照，未要求的字段不要修改：" + json.dumps(frozen, ensure_ascii=False) + "\n"
+        if recognition_fields and not scoped:
+            labels = {
+                "question_text": "完整题目文字",
+                "question_latex": "题目公式",
+                "user_solution_latex": "用户解题过程",
+                "reference_solution_latex": "参考答案",
+                "correct_approach": "正确思路",
+                "knowledge_points": "考纲知识点",
+                "error_types": "错误类型",
+                "tags": "辅助标签",
+            }
+            selected = [labels[field] for field in recognition_fields if field in labels]
+            if selected:
+                instruction += (
+                    "\n本次是局部字段快速重识别，只重点核对并返回：" + "、".join(selected) + "。"
+                    "其他字段不要依据猜测改写；如必须返回 JSON 字段，请保持原意或留空。"
+                )
         if question_label:
             instruction += (
                 f"\n用户标注这次上传对应的是【{question_label}】。"
@@ -179,7 +234,37 @@ class OpenAICompatibleClient:
         content: list[dict[str, Any]] = [{"type": "text", "text": instruction}]
         content.extend(await self._image_parts(images))
         body, meta = await self._chat({"response_format": {"type": "json_object"}, "messages": [{"role": "user", "content": content}]}, task_id)
-        parsed = parse_result(body["choices"][0]["message"]["content"])
+        raw_content = body["choices"][0]["message"]["content"]
+        if scoped:
+            try:
+                value = _decode_json(raw_content) if isinstance(raw_content, str) else raw_content
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise AIServiceError("AI 未返回有效的局部识别 JSON", "invalid_response") from exc
+            if not isinstance(value, dict):
+                raise AIServiceError("AI 局部识别结果格式无效", "invalid_response")
+            parsed = {}
+            for field in scoped:
+                if field not in value:
+                    continue
+                item = value[field]
+                if field in {"knowledge_points", "error_types", "tags", "code_blocks"}:
+                    if isinstance(item, str):
+                        item = [part.strip() for part in item.replace("，", ",").split(",") if part.strip()]
+                    elif not isinstance(item, list):
+                        item = []
+                    else:
+                        item = [str(part).strip() for part in item if str(part).strip()]
+                    parsed[field] = item
+                elif item is None:
+                    parsed[field] = ""
+                elif isinstance(item, (dict, list)):
+                    parsed[field] = json.dumps(item, ensure_ascii=False)
+                else:
+                    parsed[field] = str(item)
+            if not parsed:
+                raise AIServiceError("AI 未返回请求的识别字段", "invalid_response")
+        else:
+            parsed = parse_result(raw_content)
         if question_label:
             parsed["question_label"] = question_label
         parsed["_raw_response"] = body if settings.ai_save_raw_response else None

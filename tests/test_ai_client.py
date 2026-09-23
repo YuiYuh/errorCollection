@@ -60,3 +60,16 @@ def test_retries_without_json_mode_when_provider_rejects_it(fake_openai):
     assert "response_format" in FakeOpenAI.requests[0]
     assert "response_format" not in FakeOpenAI.requests[1]
     assert result["subject"] == "math_calculus"
+
+
+def test_scoped_recognition_keeps_result_sparse(fake_openai):
+    FakeOpenAI.response_content = '{"question_text":"完整题干","question_latex":"x^2","subject":"math_calculus"}'
+    result = asyncio.run(OpenAICompatibleClient().recognize_and_analyze(
+        [{"path": fake_openai["path"], "mime_type": "image/jpeg", "image_type": "question"}],
+        task_id=9, recognition_fields=["question_text"], recognition_context={"question_text": "旧摘要", "subject": "math_calculus"},
+    ))
+    assert result["question_text"] == "完整题干"
+    assert "question_latex" not in result
+    prompt = FakeOpenAI.requests[0]["messages"][0]["content"][0]["text"]
+    assert "JSON 键只能是：question_text" in prompt
+    assert "旧摘要" in prompt

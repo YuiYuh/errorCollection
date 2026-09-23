@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import re
+import inspect
 from collections import defaultdict
 
 from ..db import db, json_load, now_iso
@@ -164,6 +165,8 @@ async def process_task(task_id: int) -> None:
             return
         question_label = task["question_label"] or ""
         recognition_hint = task["recognition_hint"] or ""
+        recognition_fields = json_load(task["recognition_fields"], [])
+        recognition_context = json_load(task["recognition_context"], {})
         multi_batch_id = task["multi_batch_id"]
         crop_ready = bool(task["crop_ready"])
         reanalysis_question_id = task["reanalysis_question_id"]
@@ -201,15 +204,17 @@ async def process_task(task_id: int) -> None:
         if attempt:
             result = await OpenAICompatibleClient().analyze_attempt(images, dict(attempt), task_id)
         else:
+            # Keep third-party adapters and old test doubles compatible while
+            # the built-in client receives the frozen context for scoped runs.
+            kwargs = {"task_id": task_id, "question_label": question_label}
             if recognition_hint:
-                result = await OpenAICompatibleClient().recognize_and_analyze(
-                    images, task_id=task_id, question_label=question_label, recognition_hint=recognition_hint,
-                )
-            else:
-                # Keep the no-feedback call compatible with existing AI adapters.
-                result = await OpenAICompatibleClient().recognize_and_analyze(
-                    images, task_id=task_id, question_label=question_label,
-                )
+                kwargs["recognition_hint"] = recognition_hint
+            if recognition_fields:
+                kwargs["recognition_fields"] = recognition_fields
+                parameters = inspect.signature(OpenAICompatibleClient.recognize_and_analyze).parameters
+                if "recognition_context" in parameters:
+                    kwargs["recognition_context"] = recognition_context
+            result = await OpenAICompatibleClient().recognize_and_analyze(images, **kwargs)
         raw = result.pop("_raw_response", None)
         meta = result.pop("_meta", None)
         if meta:
@@ -229,8 +234,9 @@ async def process_task(task_id: int) -> None:
             score_value = float(score) if score is not None else 0.0
         except (TypeError, ValueError):
             score_value = 0.0
-        result["needs_review"] = score_value < settings.ai_confidence_threshold
-        result["task_id"] = task_id
+        if not reanalysis_question_id:
+            result["needs_review"] = score_value < settings.ai_confidence_threshold
+            result["task_id"] = task_id
         with db() as conn:
             conn.execute("UPDATE ai_results SET result_json=? WHERE task_id=?", (json.dumps(result, ensure_ascii=False), task_id))
         if reanalysis_question_id:

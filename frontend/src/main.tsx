@@ -10,7 +10,7 @@ import 'katex/dist/katex.min.css';
 import './style.css';
 import { CropEditor, ImageCompare, type EditedImage, type ImageEdit } from './ImageTools';
 
-type ImageItem = { id: number; image_type: string; mime_type: string; file_size: number; has_edit?: boolean };
+type ImageItem = { id: number; image_type: string; mime_type: string; file_size: number; has_edit?: boolean; edit_json?: string | null };
 type AiMeta = { model: string; elapsed_ms: number; attempts: number; status_code: number };
 type SyllabusPoint = { chapter: string; name: string; count: number };
 type Syllabus = Record<string, SyllabusPoint[]>;
@@ -87,6 +87,13 @@ const difficultyLevel = (value: unknown) => {
   return Number.isInteger(level) && level >= 1 && level <= 5 ? Math.max(2, level) : 3;
 };
 const difficultyName = (value: unknown) => DIFFICULTIES.find((item) => item.value === difficultyLevel(value))!.label;
+const initialImageEdit = (image: ImageItem): EditedImage | undefined => {
+  if (!image.edit_json) return undefined;
+  try {
+    const edit = typeof image.edit_json === 'string' ? JSON.parse(image.edit_json) : image.edit_json;
+    return edit && typeof edit === 'object' ? { edit, preview: '' } : undefined;
+  } catch { return undefined; }
+};
 const RATINGS: [string, string][] = [['correct', '正确'], ['partial', '部分正确'], ['wrong', '错误']];
 const NAV_ITEMS: [string, string][] = [
   ['home', '今天'], ['upload', '上传'], ['list', '错题本'],
@@ -846,12 +853,15 @@ function App() {
     }
   }
 
-  async function startReanalysis() {
+  async function startReanalysis(fields: string[] = []) {
     if (!selected) return;
+    const requestedFields = [...new Set(fields)];
+    setReanalyzeFields(requestedFields.length ? requestedFields : REANALYSIS_FIELDS.map(([field]) => field));
     setReanalyzeBusy(true); setError('');
     try {
       const created = await jsonPost(`/questions/${selected.id}/reanalyze`, {
         recognition_hint: reanalyzeHint.trim(),
+        fields: requestedFields,
         image_edits: Object.entries(reanalyzeEdits).map(([image_id, edit]) => ({ image_id: Number(image_id), ...edit })),
       });
       setReanalyzeRun(await api(`/tasks/${created.task_id}`));
@@ -867,6 +877,17 @@ function App() {
       const result = await jsonPost(`/questions/${selected.id}/reanalyze/${reanalyzeRun.id}/apply`, { fields: reanalyzeFields });
       setSelected(result.question); setReanalyzeRun(null); setNotice(`已采纳 ${reanalyzeFields.length} 个字段，原图和其余字段保持不变`);
       loadQuestions();
+    } catch (err: any) { setError(err.message); }
+    finally { setReanalyzeBusy(false); }
+  }
+
+  async function restoreVersion(versionId: number) {
+    if (!selected || !window.confirm('回退后会保留当前版本，确定回退到这个识别版本吗？')) return;
+    setReanalyzeBusy(true); setError('');
+    try {
+      const result = await jsonPost(`/questions/${selected.id}/versions/${versionId}/restore`, {});
+      setSelected(result.question); setReanalyzeRun(null);
+      setNotice('已回退到选定识别版本，回退前版本也已保存');
     } catch (err: any) { setError(err.message); }
     finally { setReanalyzeBusy(false); }
   }
@@ -1538,7 +1559,7 @@ function App() {
                 <label>指出上次识别哪里错了（可选）
                   <textarea value={reanalyzeHint} onChange={(event) => setReanalyzeHint(event.target.value)} rows={3} placeholder="例如：第二行的 2π 被识别成 π；只核对题干，不要重算解法" />
                 </label>
-                <div className="reanalyze-images">
+                 <div className="reanalyze-images">
                   {selected.images?.map((image: any) => (
                     <div className="reanalyze-image" key={image.id}>
                       <img loading="lazy" src={reanalyzePreviews[image.id] || `/api/tasks/images/${image.id}?thumbnail=true`} alt="待重新识别的原图" />
@@ -1547,33 +1568,48 @@ function App() {
                       {reanalyzeEdits[image.id] && <button type="button" className="ghost" onClick={() => { setReanalyzeEdits((current) => { const next = { ...current }; delete next[image.id]; return next; }); setReanalyzePreviews((current) => { const next = { ...current }; delete next[image.id]; return next; }); }}>恢复整张</button>}
                     </div>
                   ))}
-                </div>
-                <button className="primary wide" disabled={reanalyzeBusy} onClick={startReanalysis}>开始独立重新识别</button>
-              </details>
+                 </div>
+                 <div className="practice-actions reanalyze-quick-actions">
+                   <b>快速重识别：</b>
+                   <button type="button" disabled={reanalyzeBusy} onClick={() => startReanalysis(['question_text'])}>题目</button>
+                   <button type="button" disabled={reanalyzeBusy} onClick={() => startReanalysis(['question_latex'])}>公式</button>
+                   <button type="button" disabled={reanalyzeBusy} onClick={() => startReanalysis(['reference_solution_latex', 'correct_approach'])}>答案</button>
+                   <button type="button" disabled={reanalyzeBusy} onClick={() => startReanalysis(['knowledge_points'])}>知识点</button>
+                 </div>
+                 <button className="primary wide" disabled={reanalyzeBusy} onClick={() => startReanalysis()}>开始独立重新识别</button>
+               </details>
               {!!selected.reanalysis_runs?.length && <details className="reanalyze-history">
                 <summary>重新识别历史（{selected.reanalysis_runs.length} 次）</summary>
-                {selected.reanalysis_runs.map((run: any) => <div className="rowmeta" key={run.id}>
-                  <span className="chip">任务 #{run.id}</span><span className="chip">{statusText(run.status)}</span>
-                  <button className="ghost" onClick={async () => { try { setReanalyzeRun(await api(`/tasks/${run.id}`)); } catch (err: any) { setError(err.message); } }}>查看对比</button>
-                </div>)}
-              </details>}
+               {selected.reanalysis_runs.map((run: any) => <div className="rowmeta" key={run.id}>
+                   <span className="chip">任务 #{run.id}</span><span className="chip">{statusText(run.status)}</span>{run.recognition_fields?.length ? <span className="chip">{run.recognition_fields.length} 个字段</span> : null}
+                   <button className="ghost" onClick={async () => { try { const loaded = await api(`/tasks/${run.id}`); setReanalyzeRun(loaded); setReanalyzeFields(loaded.recognition_fields?.length ? loaded.recognition_fields : REANALYSIS_FIELDS.map(([field]) => field)); } catch (err: any) { setError(err.message); } }}>查看对比</button>
+                 </div>)}
+               </details>}
+               {!!selected.versions?.length && <details className="reanalyze-history">
+                 <summary>可回退的识别版本（{selected.versions.length} 个）</summary>
+                 {selected.versions.map((version: any) => <div className="rowmeta" key={version.id}>
+                   <span className="chip">版本 #{version.id}</span><span className="chip">{version.label || '识别版本'}</span><span className="muted">{new Date(version.created_at).toLocaleString()}</span>
+                   <span className="muted version-preview">{String(version.snapshot?.question_text || version.snapshot?.knowledge_points?.[0] || '（仅字段修正）').slice(0, 80)}</span>
+                   <button className="ghost" disabled={reanalyzeBusy} onClick={() => restoreVersion(version.id)}>回退到此版本</button>
+                 </div>)}
+               </details>}
               {reanalyzeRun && <div className="reanalyze-result">
                 <h3>新旧结果对比 · 任务 #{reanalyzeRun.id}</h3>
                 {reanalyzeRun.status === 'failed' && <p className="error">{reanalyzeRun.error || '重新识别失败，原错题仍可正常使用。'}</p>}
-                {reanalyzeRun.status === 'reanalysis_completed' && reanalyzeRun.result && <>
+                {['reanalysis_completed', 'reanalysis_applied'].includes(reanalyzeRun.status) && reanalyzeRun.result && <>
                   <p className="muted">勾选要采纳的新字段，未勾选的字段保留原结果。</p>
-                  {REANALYSIS_FIELDS.map(([field, label]) => {
+                  {REANALYSIS_FIELDS.filter(([field]) => (reanalyzeRun.recognition_fields?.length ? reanalyzeRun.recognition_fields.includes(field) : Object.prototype.hasOwnProperty.call(reanalyzeRun.result, field))).map(([field, label]) => {
                     const oldValue = selected[field];
                     const newValue = reanalyzeRun.result[field];
                     const format = (value: any) => Array.isArray(value) ? value.join('、') : String(value ?? '');
                     return <label className="reanalyze-field" key={field}><input type="checkbox" checked={reanalyzeFields.includes(field)} onChange={(event) => setReanalyzeFields((current) => event.target.checked ? [...new Set([...current, field])] : current.filter((item) => item !== field))} /><b>{label}</b><span className="old-value">原：{format(oldValue) || '（空）'}</span><span className="new-value">新：{format(newValue) || '（未返回）'}</span></label>;
                   })}
-                  <button className="primary wide" disabled={reanalyzeBusy || !reanalyzeFields.length} onClick={applyReanalysis}>采纳选中的新结果</button>
+                  {reanalyzeRun.status === 'reanalysis_completed' && <button className="primary wide" disabled={reanalyzeBusy || !reanalyzeFields.length} onClick={applyReanalysis}>采纳选中的新结果</button>}
                 </>}
                 {ACTIVE_STATUSES.includes(reanalyzeRun.status) && <p className="muted">正在重新识别，页面会自动刷新…</p>}
               </div>}
               <button className="danger wide" onClick={() => removeQuestion(selected.id)}>删除这道错题</button>
-              {reanalyzeCropImage && <CropEditor sourceUrl={`/api/tasks/images/${reanalyzeCropImage.id}`} onClose={() => setReanalyzeCropImage(null)} onSave={(value) => { setReanalyzeEdits((current) => { const next = { ...current }; if (value) next[reanalyzeCropImage.id] = value.edit; else delete next[reanalyzeCropImage.id]; return next; }); setReanalyzePreviews((current) => { const next = { ...current }; if (value) next[reanalyzeCropImage.id] = value.preview; else delete next[reanalyzeCropImage.id]; return next; }); setReanalyzeCropImage(null); }} />}
+              {reanalyzeCropImage && <CropEditor initial={initialImageEdit(reanalyzeCropImage)} sourceUrl={`/api/tasks/images/${reanalyzeCropImage.id}`} onClose={() => setReanalyzeCropImage(null)} onSave={(value) => { setReanalyzeEdits((current) => { const next = { ...current }; if (value) next[reanalyzeCropImage.id] = value.edit; else delete next[reanalyzeCropImage.id]; return next; }); setReanalyzePreviews((current) => { const next = { ...current }; if (value) next[reanalyzeCropImage.id] = value.preview; else delete next[reanalyzeCropImage.id]; return next; }); setReanalyzeCropImage(null); }} />}
             </>
           )}
           {editing && (

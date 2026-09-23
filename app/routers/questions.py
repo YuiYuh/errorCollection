@@ -1,5 +1,6 @@
 import json
 import secrets
+from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 
 from typing import Any
@@ -11,6 +12,7 @@ from ..db import db, json_load, now_iso
 from ..error_types import primary_error_type
 from ..subjects import EDIT_OPTIONS, PICKER_OPTIONS, SUBJECTS, group_members, normalize_subject
 from ..syllabus import normalize_knowledge, syllabus_catalog
+from ..services.recognition import RECOGNITION_FIELDS
 
 router = APIRouter(prefix="/api/questions", tags=["questions"])
 
@@ -21,6 +23,14 @@ SORTS = {
     "mastery_asc": "mastery ASC, created_at DESC",
     "difficulty_desc": "difficulty DESC, created_at DESC",
 }
+
+EDITABLE_FIELDS = (
+    "question_label", "subject", "section", "chapter", "question_type", "question_mode",
+    "difficulty", "question_text", "question_latex", "user_solution_latex",
+    "reference_solution_latex", "code_blocks", "first_error_step", "error_analysis",
+    "correct_approach", "key_lesson", "review_prompt", "error_types", "knowledge_points",
+    "tags", "uncertain_parts", "confidence", "needs_review", "is_typical",
+)
 
 
 class QuestionIn(BaseModel):
@@ -120,6 +130,7 @@ class ReanalysisImageEdit(BaseModel):
 class ReanalysisIn(BaseModel):
     recognition_hint: str = Field(default="", max_length=4000)
     image_edits: list[ReanalysisImageEdit] = Field(default_factory=list, max_length=20)
+    fields: list[str] = Field(default_factory=list, max_length=10)
 
 
 def normalize(row):
@@ -267,7 +278,7 @@ def confirm_question(question_id: int, payload: QuestionIn):
     return save_question(payload, existing_id)
 
 
-def save_question(payload: QuestionIn, question_id: int | None = None):
+def save_question(payload: QuestionIn, question_id: int | None = None, *, connection=None, version_label="保存修改"):
     data = payload.model_dump()
     should_sync_tags = question_id is None or "tags" in payload.model_fields_set
     data["subject"] = normalize_subject(data["subject"])
@@ -278,11 +289,22 @@ def save_question(payload: QuestionIn, question_id: int | None = None):
     )]
     data["tags"] = _clean_tags(data["tags"], data["knowledge_points"], data["error_types"])
     now = now_iso()
-    with db() as conn:
+    with (nullcontext(connection) if connection is not None else db()) as conn:
+        if connection is None:
+            conn.execute("BEGIN IMMEDIATE")
         if data.get('task_id') and conn.execute('SELECT 1 FROM practice_attempts WHERE task_id=?', (data['task_id'],)).fetchone():
             raise HTTPException(409, '这是重做记录，请在独立重做页面确认')
         if question_id and not conn.execute('SELECT 1 FROM questions WHERE id=? AND deleted_at IS NULL', (question_id,)).fetchone():
             raise HTTPException(404, '错题不存在或已移入回收站')
+        before_snapshot = None
+        if question_id:
+            before_snapshot = _load_question_for_version(conn, question_id)
+            if not should_sync_tags:
+                data["tags"] = before_snapshot.get("tags", [])
+            # Legacy rows had no version history. Capture their exact current
+            # state once so the first correction is always reversible.
+            if not conn.execute("SELECT 1 FROM question_versions WHERE question_id=? LIMIT 1", (question_id,)).fetchone():
+                _insert_version(conn, question_id, before_snapshot, None, "初始版本")
         if question_id:
             conn.execute("UPDATE questions SET question_label=?,subject=?,section=?,chapter=?,question_type=?,question_mode=?,difficulty=?,question_text=?,question_latex=?,user_solution_latex=?,reference_solution_latex=?,code_blocks=?,first_error_step=?,error_analysis=?,correct_approach=?,key_lesson=?,review_prompt=?,error_types=?,knowledge_points=?,uncertain_parts=?,confidence=?,needs_review=?,is_typical=?,status='confirmed',updated_at=? WHERE id=?", (data["question_label"],data["subject"],data["section"],data["chapter"],data["question_type"],data["question_mode"],data["difficulty"],data["question_text"],data["question_latex"],data["user_solution_latex"],data["reference_solution_latex"],json.dumps(data["code_blocks"],ensure_ascii=False),data["first_error_step"],data["error_analysis"],data["correct_approach"],data["key_lesson"],data["review_prompt"],json.dumps(data["error_types"],ensure_ascii=False),json.dumps(data["knowledge_points"],ensure_ascii=False),json.dumps(data["uncertain_parts"],ensure_ascii=False),data["confidence"],int(data["needs_review"]),int(data["is_typical"]),now,question_id))
         else:
@@ -295,7 +317,9 @@ def save_question(payload: QuestionIn, question_id: int | None = None):
             conn.execute("UPDATE ai_tasks SET status='confirmed', error=NULL, error_category=NULL, updated_at=? WHERE id=?", (now, data["task_id"]))
         if should_sync_tags:
             _sync_tags(conn, question_id, data["tags"], "ai" if data.get("task_id") else "manual")
-    return get_question(question_id)
+        if question_id:
+            _insert_version(conn, question_id, data, data.get("task_id"), version_label)
+    return get_question(question_id) if connection is None else question_id
 
 
 def _clean_tags(values: list[str], knowledge_points: list[str], error_types: list[str]) -> list[str]:
@@ -336,7 +360,7 @@ def get_question(question_id: int):
         ).fetchone()
         images = conn.execute("SELECT * FROM question_images WHERE question_id=?", (question_id,)).fetchall()
         reanalysis = conn.execute(
-            """SELECT t.id,t.status,t.error,t.recognition_hint,t.created_at,t.updated_at,
+            """SELECT t.id,t.status,t.error,t.recognition_hint,t.recognition_fields,t.created_at,t.updated_at,
                       r.result_json,r.meta_json
                FROM ai_tasks t LEFT JOIN ai_results r ON r.task_id=t.id
                WHERE t.reanalysis_question_id=? ORDER BY t.id DESC LIMIT 20""",
@@ -348,7 +372,18 @@ def get_question(question_id: int):
         run = dict(item)
         run["result"] = json_load(run.pop("result_json"), None)
         run["ai_meta"] = json_load(run.pop("meta_json"), None)
+        run["recognition_fields"] = json_load(run.get("recognition_fields"), [])
         value["reanalysis_runs"].append(run)
+    with db() as conn:
+        versions = conn.execute(
+            "SELECT id,source_task_id,label,created_at,snapshot_json FROM question_versions "
+            "WHERE question_id=? ORDER BY id DESC", (question_id,)
+        ).fetchall()
+    value["versions"] = []
+    for item in versions:
+        version = dict(item)
+        version["snapshot"] = json_load(version.pop("snapshot_json"), {})
+        value["versions"].append(version)
     return value
 
 
@@ -378,8 +413,11 @@ def delete_question(question_id: int):
 @router.post("/{question_id}/reanalyze")
 def reanalyze(question_id: int, payload: ReanalysisIn | None = None):
     payload = payload or ReanalysisIn()
+    unknown_fields = sorted(set(payload.fields) - RECOGNITION_FIELDS)
+    if unknown_fields:
+        raise HTTPException(422, f"不支持的重识别字段: {', '.join(unknown_fields)}")
     with db() as conn:
-        question = conn.execute("SELECT id,question_label FROM questions WHERE id=? AND deleted_at IS NULL", (question_id,)).fetchone()
+        question = conn.execute("SELECT * FROM questions WHERE id=? AND deleted_at IS NULL", (question_id,)).fetchone()
         if not question:
             raise HTTPException(404, "错题不存在")
         row = conn.execute("""
@@ -394,25 +432,40 @@ def reanalyze(question_id: int, payload: ReanalysisIn | None = None):
             raise HTTPException(400, "该错题没有关联图片")
         parent_task_id = row[0]
         source_images = conn.execute(
-            "SELECT * FROM question_images WHERE question_id=? ORDER BY id", (question_id,)
+            """SELECT * FROM question_images
+               WHERE question_id=?
+                 AND (task_id IS NULL OR task_id NOT IN (SELECT task_id FROM practice_attempts))
+               ORDER BY id""", (question_id,)
         ).fetchall()
         source_ids = {int(item["id"]) for item in source_images}
         edits = {item.image_id: item.model_dump(exclude={"image_id"}) for item in payload.image_edits}
         unknown = sorted(set(edits) - source_ids)
         if unknown:
             raise HTTPException(422, "裁剪图片不属于这道错题")
+        # When the user draws a region, send only those cropped source images
+        # to the model. Without this, a full-page second image could make a
+        # local correction silently re-run the entire question.
+        selected_images = [image for image in source_images if int(image["id"]) in edits] or source_images
+        context = dict(question)
+        for key in ("code_blocks", "error_types", "knowledge_points", "tags", "uncertain_parts"):
+            context[key] = json_load(context.get(key), [])
+        context["tags"] = [row[0] for row in conn.execute(
+            "SELECT t.name FROM question_tags qt JOIN tags t ON t.id=qt.tag_id WHERE qt.question_id=? ORDER BY t.name", (question_id,)
+        ).fetchall()]
+        context = _version_snapshot(context)
         now = now_iso()
         cur = conn.execute(
             """INSERT INTO ai_tasks(
-                 status,error,question_label,recognition_hint,crop_ready,created_at,updated_at,
+                 status,error,question_label,recognition_hint,recognition_fields,recognition_context,crop_ready,created_at,updated_at,
                  attempts,idempotency_key,reanalysis_question_id,reanalysis_parent_task_id
-                   ) VALUES('pending_recognition',NULL,?,?,1,?,?,0,?,?,?)""",
-            (question["question_label"], payload.recognition_hint.strip() or None, now, now,
-             secrets.token_urlsafe(16), question_id, parent_task_id),
+                   ) VALUES('pending_recognition',NULL,?,?,?,?,1,?,?,0,?,?,?)""",
+            (question["question_label"], payload.recognition_hint.strip() or None,
+             json.dumps(payload.fields, ensure_ascii=False), json.dumps(context, ensure_ascii=False), now, now,
+              secrets.token_urlsafe(16), question_id, parent_task_id),
         )
         task_id = cur.lastrowid
-        for image in source_images:
-            edit = edits.get(int(image["id"]))
+        for image in selected_images:
+            edit = edits.get(int(image["id"])) or json_load(image["edit_json"], None)
             copied = conn.execute(
                 """INSERT INTO question_images(
                      question_id,task_id,image_type,original_path,compressed_path,mime_type,file_size,
@@ -423,34 +476,87 @@ def reanalyze(question_id: int, payload: ReanalysisIn | None = None):
                  image["sha256"]),
             )
             conn.execute("INSERT INTO ai_task_images(task_id,image_id) VALUES(?,?)", (task_id, copied.lastrowid))
-    return {"task_id": task_id, "status": "pending_recognition", "question_id": question_id}
+    return {"task_id": task_id, "status": "pending_recognition", "question_id": question_id, "fields": payload.fields}
+
+
+def _version_snapshot(question: dict[str, Any]) -> dict[str, Any]:
+    """Keep only editable question fields in a rollback version."""
+    return {name: question.get(name) for name in EDITABLE_FIELDS}
+
+
+def _load_question_for_version(connection, question_id: int) -> dict[str, Any]:
+    row = connection.execute("SELECT * FROM questions WHERE id=? AND deleted_at IS NULL", (question_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "错题不存在或已移入回收站")
+    value = dict(row)
+    for key in ("code_blocks", "error_types", "knowledge_points", "uncertain_parts"):
+        value[key] = json_load(value.get(key), [])
+    value["tags"] = [item[0] for item in connection.execute(
+        "SELECT t.name FROM question_tags qt JOIN tags t ON t.id=qt.tag_id WHERE qt.question_id=? ORDER BY t.name", (question_id,)
+    ).fetchall()]
+    return _version_snapshot(value)
+
+
+def _insert_version(connection, question_id: int, question: dict[str, Any], source_task_id: int | None, label: str) -> int:
+    snapshot = json.dumps(_version_snapshot(question), ensure_ascii=False)
+    version = connection.execute(
+        "INSERT INTO question_versions(question_id,source_task_id,snapshot_json,label,created_at) VALUES(?,?,?,?,?)",
+        (question_id, source_task_id, snapshot, label, now_iso()),
+    )
+    return int(version.lastrowid)
 
 
 @router.post("/{question_id}/reanalyze/{task_id}/apply")
 def apply_reanalysis(question_id: int, task_id: int, fields: dict[str, list[str]] = Body(...)):
     requested = fields.get("fields", [])
-    allowed = set(QuestionIn.model_fields) - {"task_id"}
-    unknown = sorted(set(requested) - allowed)
+    requested = list(dict.fromkeys(requested))
+    unknown = sorted(set(requested) - RECOGNITION_FIELDS)
     if unknown:
         raise HTTPException(422, f"不支持的字段: {', '.join(unknown)}")
     if not requested:
         raise HTTPException(422, "至少选择一个要采纳的字段")
     with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         task = conn.execute(
-            "SELECT status,reanalysis_question_id FROM ai_tasks WHERE id=?", (task_id,)
+            "SELECT status,reanalysis_question_id,recognition_fields FROM ai_tasks WHERE id=?", (task_id,)
         ).fetchone()
         if not task or task["reanalysis_question_id"] != question_id:
             raise HTTPException(404, "重识别任务不存在")
         if task["status"] not in {"reanalysis_completed", "analysis_completed", "recognition_completed"}:
             raise HTTPException(409, "重识别尚未完成")
+        task_fields = set(json_load(task["recognition_fields"], []))
+        if task_fields and not set(requested).issubset(task_fields):
+            raise HTTPException(422, "只能采纳本次重识别请求的字段")
         result = conn.execute("SELECT result_json FROM ai_results WHERE task_id=?", (task_id,)).fetchone()
-    new_result = json_load(result[0], {}) if result else {}
-    current = get_question(question_id)
-    merged = {name: current.get(name) for name in (set(QuestionIn.model_fields) - {"task_id"})}
-    for name in requested:
-        if name in new_result:
-            merged[name] = new_result[name]
-    saved = save_question(QuestionIn.model_validate(merged), question_id)
-    with db() as conn:
+        new_result = json_load(result[0], {}) if result else {}
+        missing = [name for name in requested if name not in new_result]
+        if missing:
+            raise HTTPException(422, "AI 未返回字段：" + ", ".join(missing))
+        current = _load_question_for_version(conn, question_id)
+        merged = {name: current.get(name) for name in EDITABLE_FIELDS}
+        merged.update({name: new_result[name] for name in requested})
+        saved_id = save_question(QuestionIn.model_validate(merged), question_id, connection=conn, version_label=f"重识别任务 #{task_id}")
+        version = conn.execute("SELECT id FROM question_versions WHERE question_id=? ORDER BY id DESC LIMIT 1", (question_id,)).fetchone()
         conn.execute("UPDATE ai_tasks SET status='reanalysis_applied',updated_at=? WHERE id=?", (now_iso(), task_id))
-    return {"question": saved, "task_id": task_id, "fields": requested}
+    return {"question": get_question(saved_id), "task_id": task_id, "fields": requested, "version_id": version[0] if version else None}
+
+
+@router.post("/{question_id}/versions/{version_id}/restore")
+def restore_version(question_id: int, version_id: int):
+    with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        version = conn.execute(
+            "SELECT snapshot_json,source_task_id,label FROM question_versions WHERE id=? AND question_id=?",
+            (version_id, question_id),
+        ).fetchone()
+        if not version:
+            raise HTTPException(404, "识别版本不存在")
+        snapshot = json_load(version["snapshot_json"], {})
+        if not isinstance(snapshot, dict):
+            raise HTTPException(422, "识别版本内容无效")
+        current = _load_question_for_version(conn, question_id)
+        merged = {name: current.get(name) for name in EDITABLE_FIELDS}
+        merged.update({name: snapshot[name] for name in EDITABLE_FIELDS if name in snapshot})
+        before_id = conn.execute("SELECT id FROM question_versions WHERE question_id=? ORDER BY id DESC LIMIT 1", (question_id,)).fetchone()
+        saved_id = save_question(QuestionIn.model_validate(merged), question_id, connection=conn, version_label=f"回退到版本 #{version_id}")
+    return {"question": get_question(saved_id), "restored_version_id": version_id, "backup_version_id": before_id[0] if before_id else None}
