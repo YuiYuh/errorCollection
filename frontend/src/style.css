@@ -919,6 +919,14 @@ section:hover { border-color: var(--border); box-shadow: var(--neo-shadow); }
 .app-shell > section:nth-of-type(3) { animation-delay: .28s; }
 .app-shell > section:nth-of-type(4) { animation-delay: .34s; }
 .app-shell > section:nth-of-type(5) { animation-delay: .40s; }
+.app-shell.tab-review > header,
+.app-shell.tab-review > .segmented,
+.app-shell.tab-review > section,
+.app-shell.tab-review > .task-entry {
+  animation: none !important;
+  opacity: 1;
+  transform: none;
+}
 .tab-home > section:nth-of-type(2) .rowitem,
 .tab-home > section:nth-of-type(3) .repeat-point,
 .tab-home > section:nth-of-type(4) .metric,
