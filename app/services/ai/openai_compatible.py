@@ -227,9 +227,12 @@ class OpenAICompatibleClient:
             )
         if recognition_hint.strip():
             instruction += (
-                "\n用户正在纠正上一轮识别，下面是用户指出的问题。请重新查看原图，"
-                "优先核对这些位置并按原图逐字识别；不要盲目接受提示，若原图不支持该修正，"
-                "请在 uncertain_parts 说明。用户指出：\n" + recognition_hint.strip()[:4000]
+                "\n用户正在纠正上一轮识别，下面的文字可能包含明确的正确内容。"
+                "这是用户提供的校正依据：如果用户直接给出了正确的题干、公式、答案或字段内容，"
+                "必须优先采用该内容并写入对应返回字段，不能因为图片模糊、识别结果或模型判断不同而擅自改回旧内容；"
+                "只有用户没有给出正确内容、只是描述疑点时，才结合原图自行核对。"
+                "保留用户给出的数学符号、数值、选项和文字，不要把明确修正降级成 uncertain_parts。"
+                "用户的纠正内容如下：\n" + recognition_hint.strip()[:4000]
             )
         content: list[dict[str, Any]] = [{"type": "text", "text": instruction}]
         content.extend(await self._image_parts(images))

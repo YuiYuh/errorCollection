@@ -1560,9 +1560,9 @@ function App() {
               </div>
               <details className="reanalyze-panel">
                 <summary>识别有误？重新识别这道题</summary>
-                <p className="muted">可以只框选出错区域并告诉 AI 哪里错了。每次重识别都会生成独立结果，原错题不会被直接覆盖。</p>
-                <label>指出上次识别哪里错了（可选）
-                  <textarea value={reanalyzeHint} onChange={(event) => setReanalyzeHint(event.target.value)} rows={3} placeholder="例如：第二行的 2π 被识别成 π；只核对题干，不要重算解法" />
+                <p className="muted">写明要改的字段和正确内容，AI 会优先按你给出的内容修正。新结果生成后，在下方勾选并点击“采纳”才会更新错题。</p>
+                <label>错误位置与正确内容（可选）
+                  <textarea value={reanalyzeHint} onChange={(event) => setReanalyzeHint(event.target.value)} rows={3} placeholder="例如：题目第二行应为 2π（不是 π）；请将题干中的该公式改成 2π。若整道题识别有误，可直接粘贴完整正确题干。" />
                 </label>
                  <div className="reanalyze-images">
                   {selected.images?.map((image: any) => (

@@ -73,3 +73,18 @@ def test_scoped_recognition_keeps_result_sparse(fake_openai):
     prompt = FakeOpenAI.requests[0]["messages"][0]["content"][0]["text"]
     assert "JSON 键只能是：question_text" in prompt
     assert "旧摘要" in prompt
+
+
+def test_explicit_user_correction_takes_precedence(fake_openai):
+    corrected = "题目第二行应为 2π，不是 π；请在题干中原样写成 2π。"
+    asyncio.run(OpenAICompatibleClient().recognize_and_analyze(
+        [{"path": fake_openai["path"], "mime_type": "image/jpeg", "image_type": "question"}],
+        task_id=10,
+        recognition_hint=corrected,
+        recognition_fields=["question_text"],
+    ))
+    prompt = FakeOpenAI.requests[0]["messages"][0]["content"][0]["text"]
+    assert corrected in prompt
+    assert "必须优先采用该内容" in prompt
+    assert "不能因为图片模糊" in prompt
+    assert "不要盲目接受提示" not in prompt
