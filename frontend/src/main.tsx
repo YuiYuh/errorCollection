@@ -1685,10 +1685,12 @@ function App() {
             <button className={reviewScope === 'overdue' ? 'active' : ''} onClick={() => { setReviewScope('overdue'); loadReviews('overdue'); }}>逾期</button>
           </div>
           <section className="review-plan-filter">
-            <div className="cardhead"><h3>专项复习</h3>{reviewKnowledgePoint && <button className="ghost" onClick={() => { setReviewKnowledgePoint(''); loadReviews(reviewScope, ''); }}>清除知识点</button>}</div>
-            <p className="muted">按掌握度、连续错误和遗忘次数排序，选择一个考纲知识点只复习它的到期题目。</p>
+            <div className="cardhead"><h3>专项复习</h3></div>
+            <p className="muted">选择下方知识点，只复习该知识点的到期题目；未选择时显示全部到期题目。知识点按薄弱程度排序。</p>
             <div className="chips-wrap">
-              <button className={`chip-button ${!reviewKnowledgePoint ? 'active' : ''}`} onClick={() => { setReviewKnowledgePoint(''); loadReviews(reviewScope, ''); }}>全部知识点</button>
+              {reviewKnowledgePoint
+                ? <button className="chip-button" onClick={() => { setReviewKnowledgePoint(''); loadReviews(reviewScope, ''); }}>清除筛选 · 显示全部到期题目</button>
+                : <span className="chip-button active chip-button-status" aria-current="true">当前：全部知识点</span>}
               {todayPriority.map((point) => <button key={`${point.subject}-${point.name}`} className={`chip-button ${reviewKnowledgePoint === point.name ? 'active' : ''}`} onClick={() => { setReviewKnowledgePoint(point.name); loadReviews(reviewScope, point.name); }}>
                 {point.name} · {point.error_count} 次错误
               </button>)}

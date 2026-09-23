@@ -607,6 +607,7 @@ details[open] summary { border-bottom: 1px solid var(--border); margin-bottom: 1
 .chips-wrap { display: flex; flex-wrap: wrap; gap: 8px; }
 .chip-button { border: 1px solid var(--border); background: var(--surface-2); color: var(--muted); border-radius: 999px; padding: 7px 11px; font-size: .82rem; cursor: pointer; }
 .chip-button:hover, .chip-button.active { border-color: var(--primary); background: var(--primary-soft); color: var(--primary); }
+.chip-button-status { display: inline-flex; align-items: center; cursor: default; }
 
 /* ============ 克制的 Apple 风格层次 ============ */
 :root {
