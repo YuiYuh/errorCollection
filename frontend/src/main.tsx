@@ -1084,13 +1084,11 @@ function App() {
             <summary aria-label="打开更多功能">•••</summary>
             <div className="top-menu-panel">
               <button className={tab === 'status' ? 'active' : ''} onClick={() => go('status')}>⚙️ 我的</button>
+              <button onClick={() => setTheme(theme === 'dark' ? 'light' : theme === 'light' ? 'auto' : 'dark')}>
+                {theme === 'dark' ? '🌙 深色模式' : theme === 'light' ? '☀️ 浅色模式' : '🌗 跟随系统'}
+              </button>
             </div>
           </details>
-          <button
-            className="iconbtn"
-            onClick={() => setTheme(theme === 'dark' ? 'light' : theme === 'light' ? 'auto' : 'dark')}
-            title="切换主题：深色 / 浅色 / 跟随系统"
-          >{theme === 'dark' ? '🌙' : theme === 'light' ? '☀️' : '🌗'}</button>
         </div>
       </header>
 
