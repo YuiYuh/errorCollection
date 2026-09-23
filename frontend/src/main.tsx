@@ -97,7 +97,7 @@ const initialImageEdit = (image: ImageItem): EditedImage | undefined => {
 const RATINGS: [string, string][] = [['correct', '正确'], ['partial', '部分正确'], ['wrong', '错误']];
 const NAV_ITEMS: [string, string][] = [
   ['home', '今天'], ['review', '复习'], ['list', '错题本'],
-  ['stats', '洞察'], ['status', '我的'],
+  ['stats', '洞察'],
 ];
 const REVIEW_BUTTONS: [string, string][] = [['forgot', '忘记'], ['hard', '困难'], ['remembered', '记得'], ['mastered', '熟练']];
 const ERROR_TYPE_OPTIONS = ['概念理解', '方法选择', '计算与符号', '条件与边界', '审题与信息提取', '推理与论证', '记忆与规范', '代码与实现'];
@@ -1080,6 +1080,12 @@ function App() {
           <span className={'aipill ' + (status?.api_key_configured ? 'ok' : 'warn')}>
             {status?.api_key_configured ? (status?.ai_model || 'AI 就绪') : 'AI 未配置'}
           </span>
+          <details className={`top-menu ${tab === 'status' ? 'active' : ''}`}>
+            <summary aria-label="打开更多功能">•••</summary>
+            <div className="top-menu-panel">
+              <button className={tab === 'status' ? 'active' : ''} onClick={() => go('status')}>⚙️ 我的</button>
+            </div>
+          </details>
           <button
             className="iconbtn"
             onClick={() => setTheme(theme === 'dark' ? 'light' : theme === 'light' ? 'auto' : 'dark')}

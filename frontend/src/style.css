@@ -844,6 +844,44 @@ header { padding-bottom: 22px; }
 .aipill.warn { background: #fde68a; color: #1e1b2e; }
 .iconbtn { background: #fff; color: var(--text); }
 :root[data-theme="dark"] .iconbtn { background: var(--surface); }
+.headside { position: relative; }
+.top-menu { position: relative; z-index: 12; }
+.top-menu > summary {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border: 2px solid var(--border);
+  border-radius: 999px;
+  background: #fbcfe8;
+  color: var(--text);
+  box-shadow: 3px 3px 0 var(--border);
+  cursor: pointer;
+  list-style: none;
+  font-size: 1.05rem;
+  font-weight: 900;
+  letter-spacing: .12em;
+  line-height: 1;
+  transition: transform .16s ease, box-shadow .16s ease;
+}
+.top-menu > summary::-webkit-details-marker { display: none; }
+.top-menu > summary:hover { transform: translate(-1px, -1px); box-shadow: 4px 4px 0 var(--border); }
+.top-menu[open] > summary { transform: rotate(90deg); box-shadow: 1px 1px 0 var(--border); }
+.top-menu.active > summary { background: #fde047; }
+.top-menu-panel {
+  position: absolute;
+  top: 48px;
+  right: 0;
+  min-width: 126px;
+  padding: 8px;
+  border: 2px solid var(--border);
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: 4px 4px 0 var(--border);
+  animation: neo-rise .2s ease both;
+}
+.top-menu-panel button { width: 100%; margin: 0; padding: 9px 12px; border: 0; box-shadow: none; text-align: left; background: transparent; }
+.top-menu-panel button:hover, .top-menu-panel button.active { background: var(--primary-soft); box-shadow: none; transform: none; }
 button {
   border: 2px solid var(--border);
   border-radius: 999px;
@@ -997,7 +1035,7 @@ section:hover { border-color: var(--border); box-shadow: var(--neo-shadow); }
 nav {
   left: 50%; right: auto; bottom: calc(16px + env(safe-area-inset-bottom));
   width: min(calc(100% - 24px), 430px); transform: translateX(-50%);
-  display: grid; grid-template-columns: repeat(6, 1fr); gap: 3px;
+  display: grid; grid-template-columns: repeat(5, 1fr); gap: 3px;
   padding: 9px 9px 9px; border: 2px solid #1e1b2e; border-radius: 30px;
   background: rgba(30,27,46,.96); box-shadow: 6px 7px 0 rgba(30,27,46,.24);
 }
